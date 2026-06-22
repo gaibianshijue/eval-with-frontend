@@ -170,8 +170,11 @@ h1 { font-size: 1.4rem; margin: 0 0 4px; }
         <input id="tokenizer_path" type="text" placeholder="/ainfs-nv-prod/.../tokenizer">
     </div>
     <div class="form-group">
-        <label for="openai_api_key">API Key</label>
-        <input id="openai_api_key" type="password" placeholder="留空则传空值">
+        <label>API Keys（多用户并发）</label>
+        <div style="flex:1;">
+            <div id="api-key-container"></div>
+            <button class="add-btn" id="add-api-key-btn">+ 添加 API Key</button>
+        </div>
     </div>
 </div>
 </div>
@@ -299,7 +302,8 @@ const DOM = {
     modelName:       $('model_name'),
     apiUrl:          $('api_url'),
     tokenizerPath:   $('tokenizer_path'),
-    apiKey:          $('openai_api_key'),
+    apiKeyContainer: $('api-key-container'),
+    addApiKeyBtn:    $('add-api-key-btn'),
     openclawPath:    $('openclaw_dataset_path'),
     openclawName:    $('openclaw_dataset_name'),
     testRepeats:     $('test_repeats'),
@@ -323,6 +327,24 @@ const DOM = {
 };
 
 // ========== dynamic row helpers ==========
+function createApiKeyRow(value) {
+    const div = document.createElement('div');
+    div.className = 'dynamic-row';
+    div.innerHTML = `
+        <input class="api-key-input" type="password" value="${value || ''}" placeholder="sk-..." style="width:280px;">
+        <button class="del-btn" title="删除">✕</button>
+    `;
+    div.querySelector('.del-btn').addEventListener('click', () => {
+        // 至少保留一行
+        if (DOM.apiKeyContainer.querySelectorAll('.dynamic-row').length > 1) {
+            div.remove();
+            saveToLS();
+        }
+    });
+    div.querySelector('.api-key-input').addEventListener('input', () => saveToLS());
+    return div;
+}
+
 function createIORow(inputVal, outputVal) {
     const div = document.createElement('div');
     div.className = 'dynamic-row';
@@ -351,6 +373,9 @@ function createCRRow(parallelVal, numberVal) {
 
 // 初始化默认行
 function initDynamicRows() {
+    // API Keys — 默认一行空输入
+    DOM.apiKeyContainer.appendChild(createApiKeyRow(''));
+
     // IO groups — 用原脚本默认值
     const ioDefaults = [{input: 32768, output: 500}];
     ioDefaults.forEach(d => DOM.ioContainer.appendChild(createIORow(d.input, d.output)));
@@ -371,6 +396,9 @@ function initDynamicRows() {
     crDefaults.forEach(d => DOM.crContainer.appendChild(createCRRow(d.parallel, d.number)));
 }
 
+DOM.addApiKeyBtn.addEventListener('click', () => {
+    DOM.apiKeyContainer.appendChild(createApiKeyRow(''));
+});
 DOM.addIoBtn.addEventListener('click', () => {
     DOM.ioContainer.appendChild(createIORow('', ''));
 });
@@ -386,7 +414,7 @@ function saveToLS() {
         modelName: DOM.modelName.value,
         apiUrl: DOM.apiUrl.value,
         tokenizerPath: DOM.tokenizerPath.value,
-        apiKey: DOM.apiKey.value,
+        apiKeys: [],
         openclawPath: DOM.openclawPath.value,
         openclawName: DOM.openclawName.value,
         testRepeats: DOM.testRepeats.value,
@@ -397,6 +425,9 @@ function saveToLS() {
         crRows: [],
         taskTypes: [],
     };
+    DOM.apiKeyContainer.querySelectorAll('.api-key-input').forEach(inp => {
+        data.apiKeys.push(inp.value);
+    });
     DOM.ioContainer.querySelectorAll('.dynamic-row').forEach(row => {
         const inp = row.querySelector('.io-input');
         const out = row.querySelector('.io-output');
@@ -420,7 +451,16 @@ function loadFromLS() {
     if (data.modelName) DOM.modelName.value = data.modelName;
     if (data.apiUrl) DOM.apiUrl.value = data.apiUrl;
     if (data.tokenizerPath) DOM.tokenizerPath.value = data.tokenizerPath;
-    if (data.apiKey) DOM.apiKey.value = data.apiKey;
+
+    // API Keys：兼容旧格式 apiKey (string) 和新格式 apiKeys (array)
+    if (Array.isArray(data.apiKeys) && data.apiKeys.length) {
+        DOM.apiKeyContainer.innerHTML = '';
+        data.apiKeys.forEach(v => DOM.apiKeyContainer.appendChild(createApiKeyRow(v)));
+    } else if (data.apiKey) {
+        DOM.apiKeyContainer.innerHTML = '';
+        DOM.apiKeyContainer.appendChild(createApiKeyRow(data.apiKey));
+    }
+
     if (data.openclawPath) DOM.openclawPath.value = data.openclawPath;
     if (data.openclawName) DOM.openclawName.value = data.openclawName;
     if (data.testRepeats) DOM.testRepeats.value = data.testRepeats;
@@ -459,11 +499,18 @@ function collectConfig() {
         const n = parseInt(row.querySelector('.cr-number').value, 10);
         if (!isNaN(p) && !isNaN(n)) cr.push({parallel: p, number: n});
     });
+    // 收集所有 API Key
+    const apiKeys = [];
+    DOM.apiKeyContainer.querySelectorAll('.api-key-input').forEach(inp => {
+        const v = inp.value.trim();
+        if (v) apiKeys.push(v);
+    });
+
     return {
         model_name: DOM.modelName.value.trim(),
         api_url: DOM.apiUrl.value.trim(),
         tokenizer_path: DOM.tokenizerPath.value.trim(),
-        openai_api_key: DOM.apiKey.value,
+        openai_api_keys: apiKeys,
         openclaw_dataset_path: DOM.openclawPath.value.trim(),
         openclaw_dataset_name: DOM.openclawName.value.trim(),
         test_repeats: parseInt(DOM.testRepeats.value, 10) || 3,
@@ -557,6 +604,7 @@ async function pollProgress() {
         DOM.progressEta.textContent = f['预计剩余'] || '--';
         // detail 行
         const parts = [];
+        if (f['用户数'] && f['用户数'] > 1) parts.push(`${f['用户数']}用户并发`);
         if (f['任务']) parts.push(f['任务']);
         if (f['IO配置']) parts.push(f['IO配置']);
         if (f['并发']) parts.push(f['并发']);
@@ -588,6 +636,7 @@ DOM.btnStart.addEventListener('click', async () => {
     const cfg = collectConfig();
 
     // 简单前端验证
+    if (!cfg.openai_api_keys.length) { alert('请至少填写一个 API Key'); return; }
     if (!cfg.task_types.length) { alert('请至少选一项任务类型'); return; }
     if (!cfg.input_output_groups.length) { alert('输入输出长度组至少需要一行'); return; }
     if (!cfg.concurrency_request_groups.length) { alert('并发请求组至少需要一行'); return; }
@@ -661,6 +710,7 @@ function setupAutoSave() {
     inputs.forEach(inp => inp.addEventListener('input', onInput));
     // 监听动态行增加
     const observer = new MutationObserver(() => saveToLS());
+    observer.observe(DOM.apiKeyContainer, {childList: true});
     observer.observe(DOM.ioContainer, {childList: true});
     observer.observe(DOM.crContainer, {childList: true});
     // checkbox

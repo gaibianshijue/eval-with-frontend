@@ -10,6 +10,7 @@ import logging
 import threading
 import time
 import traceback
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -40,7 +41,7 @@ class RunConfig:
     model_name: str
     api_url: str
     tokenizer_path: str
-    openai_api_key: str
+    openai_api_keys: list[str]       # 支持多 API Key，模拟多用户
     openclaw_dataset_path: str
     openclaw_dataset_name: str
     test_repeats: int
@@ -53,11 +54,18 @@ class RunConfig:
 
     @classmethod
     def from_dict(cls, d: dict) -> "RunConfig":
+        # 兼容旧格式 openai_api_key（单字符串）→ 自动转为列表
+        api_keys = d.get("openai_api_keys")
+        if not api_keys:
+            single = d.get("openai_api_key", "")
+            api_keys = [single] if single else []
+        else:
+            api_keys = [k for k in api_keys if k]  # 过滤空字符串
         return cls(
             model_name=str(d.get("model_name", "")).strip(),
             api_url=str(d.get("api_url", "")).strip(),
             tokenizer_path=str(d.get("tokenizer_path", "")).strip(),
-            openai_api_key=str(d.get("openai_api_key", "")),
+            openai_api_keys=api_keys,
             openclaw_dataset_path=str(d.get("openclaw_dataset_path", "")).strip(),
             openclaw_dataset_name=str(d.get("openclaw_dataset_name", "line_by_line")).strip() or "line_by_line",
             test_repeats=int(d.get("test_repeats", 1) or 1),
@@ -74,8 +82,11 @@ class RunConfig:
     def to_safe_dict(self) -> dict:
         """落盘用，脱敏 api_key。"""
         d = asdict(self)
-        if d.get("openai_api_key"):
-            d["openai_api_key"] = "***"
+        d["openai_api_keys"] = [
+            (f"sk-***{k[-4:]}" if len(k) > 4 else "***") for k in d.get("openai_api_keys", [])
+        ]
+        # 移除旧字段（如果 asdict 包含了的话）
+        d.pop("openai_api_key", None)
         return d
 
     def validate(self) -> Optional[str]:
@@ -83,13 +94,15 @@ class RunConfig:
             return "model_name 不能为空"
         if not self.api_url:
             return "api_url 不能为空"
-        if not self.task_types:
-            return "task_types 至少选一项"
+        if not self.openai_api_keys:
+            return "至少需要填写一个 API Key"
         for t in self.task_types:
             if t not in ("random", "openclaw"):
                 return f"未知 task_type: {t}"
             if t == "openclaw" and not self.openclaw_dataset_path:
                 return "选择了 openclaw 任务但未填写 openclaw_dataset_path"
+        if not self.task_types:
+            return "task_types 至少选一项"
         if not self.input_output_groups:
             return "input_output_groups 至少需要一行"
         if not self.concurrency_request_groups:
@@ -134,6 +147,9 @@ class BenchmarkRunner:
         self._started_at: Optional[str] = None
         self._progress: dict = self._empty_progress()
         self._log_handler: Optional[SSELogHandler] = None
+        # 多 Key 并发的线程安全进度追踪
+        self._progress_lock = threading.Lock()
+        self._completed_count: int = 0
 
     # ---------- public ----------
     def start(self, config_dict: dict) -> tuple[bool, str]:
@@ -167,13 +183,17 @@ class BenchmarkRunner:
             self._state = "running"
             self._error = ""
             self._started_at = datetime.now().isoformat(timespec="seconds")
-            total = (len(cfg.task_types)
-                     * len(cfg.input_output_groups)
-                     * len(cfg.concurrency_request_groups)
-                     * cfg.test_repeats)
+            num_keys = len(cfg.openai_api_keys) or 1
+            per_key_total = (len(cfg.task_types)
+                             * len(cfg.input_output_groups)
+                             * len(cfg.concurrency_request_groups)
+                             * cfg.test_repeats)
+            total = per_key_total * num_keys
             self._progress = self._empty_progress()
             self._progress["total"] = total
+            self._progress["api_key_count"] = num_keys
             self._progress["run_id"] = ts
+            self._completed_count = 0
 
             self._thread = threading.Thread(
                 target=self._worker, args=(cfg,), name="BenchmarkRunner", daemon=True,
@@ -198,6 +218,7 @@ class BenchmarkRunner:
         prog["并发"] = prog.get("concurrency", "")
         prog["重复"] = prog.get("repeat", "")
         prog["预计剩余"] = self._eta()
+        prog["用户数"] = prog.get("api_key_count", 1)
         return {
             "state": self._state,
             "running": self._thread is not None and self._thread.is_alive(),
@@ -265,12 +286,13 @@ class BenchmarkRunner:
                 return
             time.sleep(0.5)
 
-    def _build_arguments(self, cfg: RunConfig, task_type: str, io: IOGroup, cr: CRGroup) -> Arguments:
+    def _build_arguments(self, cfg: RunConfig, task_type: str, io: IOGroup, cr: CRGroup,
+                         api_key: str = "") -> Arguments:
         common = dict(
             model=cfg.model_name,
             url=cfg.api_url,
             api="openai",
-            api_key=cfg.openai_api_key or None,
+            api_key=api_key or None,
             parallel=cr.parallel,
             number=cr.number,
             max_tokens=io.output,
@@ -301,85 +323,30 @@ class BenchmarkRunner:
     def _worker(self, cfg: RunConfig) -> None:
         writer = CsvWriter(self._csv_path, cfg.model_name)
         total = self._progress["total"]
-        counter = 0
-        self._broadcast(f"=== 开始批量测试 @ {self._started_at} 共 {total} 个测试 ===")
+        num_keys = len(cfg.openai_api_keys)
+        self._broadcast(f"=== 开始批量测试 @ {self._started_at} 共 {total} 个测试 ({num_keys} 个用户并发) ===")
         self._broadcast(f"=== 结果文件: {self._csv_path} ===")
 
         try:
-            for task_type in cfg.task_types:
-                self._broadcast(f"--- 任务类型: {task_type} ---")
-                for io in cfg.input_output_groups:
-                    for cr in cfg.concurrency_request_groups:
-                        run_results = []
-                        for repeat in range(1, cfg.test_repeats + 1):
-                            if self._stop_event.is_set():
-                                self._broadcast("[user] 收到停止信号，退出")
-                                self._state = "stopped"
-                                return
-                            counter += 1
-                            self._progress.update({
-                                "current": counter,
-                                "task_type": task_type,
-                                "io": f"输入{io.input}/输出{io.output}",
-                                "concurrency": f"并发{cr.parallel}",
-                                "repeat": f"{repeat}/{cfg.test_repeats}",
-                            })
-                            self._broadcast(
-                                f"=== 测试 {counter}/{total}: "
-                                f"task={task_type} repeat={repeat}/{cfg.test_repeats} "
-                                f"input={io.input} output={io.output} "
-                                f"parallel={cr.parallel} number={cr.number} ==="
-                            )
-
-                            try:
-                                args = self._build_arguments(cfg, task_type, io, cr)
-                                results = run_perf_benchmark(args)
-                            except Exception as e:  # noqa: BLE001
-                                self._broadcast(f"[error] evalscope 调用失败: {e}")
-                                self._broadcast(traceback.format_exc())
-                                continue
-
-                            key = f"parallel_{cr.parallel}_number_{cr.number}"
-                            run = results.get(key) or next(iter(results.values()), None)
-                            if not run or "metrics" not in run:
-                                self._broadcast(f"[warn] 未拿到 {key} 的结果，跳过 CSV")
-                                continue
-
-                            try:
-                                row = writer.write_run(
-                                    task_type=task_type,
-                                    repeat_num=repeat,
-                                    prompt_length=io.input,
-                                    max_tokens=io.output,
-                                    metrics=run["metrics"],
-                                    percentiles=run["percentiles"],
-                                    output_dir=str(self._run_dir / "outputs"),
-                                )
-                                run_results.append(run)
-                                self._broadcast(
-                                    f"[ok] {key}: TTFT={row['TTFT_Avg(s)']}s "
-                                    f"TPOT={row['TPOT_Avg(s)']}s "
-                                    f"OutThr={row['Output_through(tok/s)']}tok/s"
-                                )
-                            except Exception as e:  # noqa: BLE001
-                                self._broadcast(f"[error] 写 CSV 失败: {e}")
-
-                            if counter < total and cfg.wait_between_tests > 0:
-                                self._broadcast(f"--- 等待 {cfg.wait_between_tests}s 进入下一测试 ---")
-                                self._sleep_with_stop(cfg.wait_between_tests)
-
-                        # 一组 cr 的所有 repeat 跑完，算 AVG
-                        if cfg.test_repeats > 1 and run_results:
-                            try:
-                                writer.write_avg(
-                                    task_type=task_type,
-                                    prompt_length=io.input,
-                                    max_tokens=io.output,
-                                    runs=run_results,
-                                )
-                                self._broadcast(f"[avg] 写入 {len(run_results)} 次重复的平均值")
-                            except Exception as e:  # noqa: BLE001
-                                self._broadcast(f"[error] 写 AVG 失败: {e}")
+            if num_keys <= 1:
+                # 单 Key：保持原有行为，无需多线程
+                key = cfg.openai_api_keys[0] if cfg.openai_api_keys else ""
+                self._run_key_loop(cfg, writer, key, key_idx=0, key_label="用户1")
+            else:
+                # 多 Key：每个 Key 启动独立线程并行跑全部子测试
+                with ThreadPoolExecutor(max_workers=num_keys) as executor:
+                    futures = {}
+                    for i, api_key in enumerate(cfg.openai_api_keys):
+                        key_label = f"用户{i + 1}"
+                        f = executor.submit(self._run_key_loop, cfg, writer, api_key,
+                                            key_idx=i, key_label=key_label)
+                        futures[f] = key_label
+                    for f in as_completed(futures):
+                        label = futures[f]
+                        try:
+                            f.result()
+                        except Exception as e:  # noqa: BLE001
+                            self._broadcast(f"[error] {label} 线程异常: {e}")
 
             self._state = "completed"
             self._broadcast(f"=== 全部完成 @ {datetime.now().isoformat(timespec='seconds')} ===")
@@ -391,3 +358,87 @@ class BenchmarkRunner:
             self._broadcast(traceback.format_exc())
         finally:
             self._detach_logger()
+
+    def _run_key_loop(self, cfg: RunConfig, writer: CsvWriter,
+                      api_key: str, key_idx: int, key_label: str) -> None:
+        """单个 API Key 的完整子测试循环。多 Key 时由 ThreadPoolExecutor 并发调用。"""
+        for task_type in cfg.task_types:
+            self._broadcast(f"[{key_label}] --- 任务类型: {task_type} ---")
+            for io in cfg.input_output_groups:
+                for cr in cfg.concurrency_request_groups:
+                    run_results = []
+                    for repeat in range(1, cfg.test_repeats + 1):
+                        if self._stop_event.is_set():
+                            self._broadcast(f"[{key_label}] 收到停止信号，退出")
+                            with self._progress_lock:
+                                self._state = "stopped"
+                            return
+
+                        with self._progress_lock:
+                            self._completed_count += 1
+                            counter = self._completed_count
+                        self._progress.update({
+                            "current": counter,
+                            "task_type": task_type,
+                            "io": f"输入{io.input}/输出{io.output}",
+                            "concurrency": f"并发{cr.parallel}",
+                            "repeat": f"{repeat}/{cfg.test_repeats}",
+                        })
+                        self._broadcast(
+                            f"=== [{key_label}] 测试 {counter}/{self._progress['total']}: "
+                            f"task={task_type} repeat={repeat}/{cfg.test_repeats} "
+                            f"input={io.input} output={io.output} "
+                            f"parallel={cr.parallel} number={cr.number} ==="
+                        )
+
+                        try:
+                            args = self._build_arguments(cfg, task_type, io, cr, api_key=api_key)
+                            results = run_perf_benchmark(args)
+                        except Exception as e:  # noqa: BLE001
+                            self._broadcast(f"[{key_label}] [error] evalscope 调用失败: {e}")
+                            self._broadcast(traceback.format_exc())
+                            continue
+
+                        key = f"parallel_{cr.parallel}_number_{cr.number}"
+                        run = results.get(key) or next(iter(results.values()), None)
+                        if not run or "metrics" not in run:
+                            self._broadcast(f"[{key_label}] [warn] 未拿到 {key} 的结果，跳过 CSV")
+                            continue
+
+                        try:
+                            row = writer.write_run(
+                                task_type=task_type,
+                                repeat_num=repeat,
+                                prompt_length=io.input,
+                                max_tokens=io.output,
+                                metrics=run["metrics"],
+                                percentiles=run["percentiles"],
+                                output_dir=str(self._run_dir / "outputs"),
+                                api_key_index=key_idx + 1,
+                            )
+                            run_results.append(run)
+                            self._broadcast(
+                                f"[{key_label}] [ok] {key}: TTFT={row['TTFT_Avg(s)']}s "
+                                f"TPOT={row['TPOT_Avg(s)']}s "
+                                f"OutThr={row['Output_through(tok/s)']}tok/s"
+                            )
+                        except Exception as e:  # noqa: BLE001
+                            self._broadcast(f"[{key_label}] [error] 写 CSV 失败: {e}")
+
+                        if counter < self._progress["total"] and cfg.wait_between_tests > 0:
+                            self._broadcast(f"[{key_label}] --- 等待 {cfg.wait_between_tests}s 进入下一测试 ---")
+                            self._sleep_with_stop(cfg.wait_between_tests)
+
+                    # 一组 cr 的所有 repeat 跑完，算 AVG
+                    if cfg.test_repeats > 1 and run_results:
+                        try:
+                            writer.write_avg(
+                                task_type=task_type,
+                                prompt_length=io.input,
+                                max_tokens=io.output,
+                                runs=run_results,
+                                api_key_index=key_idx + 1,
+                            )
+                            self._broadcast(f"[{key_label}] [avg] 写入 {len(run_results)} 次重复的平均值")
+                        except Exception as e:  # noqa: BLE001
+                            self._broadcast(f"[{key_label}] [error] 写 AVG 失败: {e}")
