@@ -1,7 +1,7 @@
-"""CSV 输出 —— 字段格式与 eval_bench0522.sh 严格对齐。
+"""CSV 输出 —— 字段格式与 eval_bench0522.sh 对齐（新增 api_key_index 列）。
 
-原脚本表头 21 列（按顺序）：
-test_timestamp, model_name, task_type, repeat_num, Prompt_length, Max_tokens,
+表头 22 列（按顺序）：
+test_timestamp, model_name, api_key_index, task_type, repeat_num, Prompt_length, Max_tokens,
 Number_of_concurrency, Total_requests, Succeed_requests, Avg_Latency(s),
 Latency_P90(s), TTFT_Avg(s), TTFT_P90(s), TPOT_Avg(s), Avg_Inter_Token_Latency(s),
 Avg_Input_Tokens, Avg_Output_Tokens, Output_through(tok/s), RPS(req/s),
@@ -12,12 +12,13 @@ from __future__ import annotations
 
 import csv
 import statistics
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Iterable
 
 HEADER = [
-    "test_timestamp", "model_name", "task_type", "repeat_num",
+    "test_timestamp", "model_name", "api_key_index", "task_type", "repeat_num",
     "Prompt_length", "Max_tokens", "Number_of_concurrency",
     "Total_requests", "Succeed_requests",
     "Avg_Latency(s)", "Latency_P90(s)",
@@ -63,10 +64,12 @@ def _to_row(
     percentiles,                   # PercentileResult
     model_name: str,
     output_dir: str,
+    api_key_index: int = 1,       # API Key 序号（从 1 开始），多用户标识
 ) -> list[str]:
     return [
         datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         model_name,
+        str(api_key_index),
         task_type,
         repeat_label,
         _fmt(prompt_length),
@@ -90,11 +93,12 @@ def _to_row(
 
 
 class CsvWriter:
-    """逐行写出 CSV；自带表头。同一文件多次 open 用 append 模式追加。"""
+    """逐行写出 CSV；自带表头。同一文件多次 open 用 append 模式追加。线程安全。"""
 
     def __init__(self, path: Path, model_name: str):
         self.path = path
         self.model_name = model_name
+        self._write_lock = threading.Lock()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         if not self.path.exists():
             with self.path.open("w", encoding="utf-8", newline="") as f:
@@ -109,10 +113,12 @@ class CsvWriter:
         metrics,
         percentiles,
         output_dir: str,
+        api_key_index: int = 1,
     ) -> dict:
         row = _to_row(
             task_type, str(repeat_num), prompt_length, max_tokens,
             metrics, percentiles, self.model_name, output_dir,
+            api_key_index=api_key_index,
         )
         self._append(row)
         return dict(zip(HEADER, row))
@@ -123,6 +129,7 @@ class CsvWriter:
         prompt_length: int,
         max_tokens: int,
         runs: Iterable[dict],     # list of {"metrics":..., "percentiles":...}
+        api_key_index: int = 1,
     ) -> dict:
         """对一组 repeat 结果取均值。模仿原脚本只输出数值列，分类列复用第一条。"""
         runs = list(runs)
@@ -147,6 +154,7 @@ class CsvWriter:
         row = [
             datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             self.model_name,
+            str(api_key_index),
             task_type,
             "AVG",
             _fmt(prompt_length),
@@ -171,5 +179,6 @@ class CsvWriter:
         return dict(zip(HEADER, row))
 
     def _append(self, row: list[str]) -> None:
-        with self.path.open("a", encoding="utf-8", newline="") as f:
-            csv.writer(f).writerow(row)
+        with self._write_lock:
+            with self.path.open("a", encoding="utf-8", newline="") as f:
+                csv.writer(f).writerow(row)
