@@ -1,4 +1,6 @@
-# eval_bench web demo (SDK 版)
+# eval-with-frontend
+
+带有前端的压测工具，基于evalscope sdk
 
 把 evalscope 压测能力包装成 Web 服务：在浏览器配置参数 → 启动 → 实时看日志和进度 → 一键停止。
 
