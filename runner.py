@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import threading
@@ -152,6 +153,8 @@ class BenchmarkRunner:
         # 多 Key 并发的线程安全进度追踪
         self._progress_lock = threading.Lock()
         self._completed_count: int = 0
+        # evalscope 内部使用全局 asyncio.Event，多线程并发调用会冲突，需串行化
+        self._evalscope_lock = threading.Lock()
 
     # ---------- public ----------
     def start(self, config_dict: dict) -> tuple[bool, str]:
@@ -288,6 +291,34 @@ class BenchmarkRunner:
                 return
             time.sleep(0.5)
 
+    def _run_perf_benchmark_safe(self, args: Arguments) -> dict:
+        """线程安全的 run_perf_benchmark 封装。
+
+        evalscope 内部使用模块级 asyncio.Event 和 new_event_loop()，
+        多线程并发调用会导致事件循环冲突（Event loop is closed /
+        Task was destroyed / KeyError: fd not registered）。
+        通过加锁串行化 + 显式管理事件循环生命周期来解决。
+        """
+        with self._evalscope_lock:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                return run_perf_benchmark(args)
+            finally:
+                # 清理 pending Task 并关闭循环，防止资源泄漏
+                try:
+                    pending = asyncio.all_tasks(loop)
+                    for task in pending:
+                        task.cancel()
+                    if pending:
+                        loop.run_until_complete(
+                            asyncio.gather(*pending, return_exceptions=True)
+                        )
+                except Exception:  # noqa: BLE001
+                    pass
+                finally:
+                    loop.close()
+
     def _build_arguments(self, cfg: RunConfig, task_type: str, io: IOGroup, cr: CRGroup,
                          api_key: str = "") -> Arguments:
         common = dict(
@@ -395,7 +426,7 @@ class BenchmarkRunner:
 
                         try:
                             args = self._build_arguments(cfg, task_type, io, cr, api_key=api_key)
-                            results = run_perf_benchmark(args)
+                            results = self._run_perf_benchmark_safe(args)
                         except Exception as e:  # noqa: BLE001
                             self._broadcast(f"[{key_label}] [error] evalscope 调用失败: {e}")
                             self._broadcast(traceback.format_exc())
