@@ -14,7 +14,7 @@ import threading
 from collections import deque
 from pathlib import Path
 
-from flask import Flask, Response, jsonify, render_template, request
+from flask import Flask, Response, jsonify, render_template, request, send_file
 
 from runner import BenchmarkRunner
 
@@ -99,6 +99,24 @@ def stop():
 @app.route("/status", methods=["GET"])
 def status():
     return jsonify(_runner.status())
+
+
+@app.route("/results", methods=["GET"])
+def results():
+    """返回当前运行累积的所有结果行（供前端实时展示）。"""
+    return jsonify(_runner.results())
+
+
+@app.route("/download/csv", methods=["GET"])
+def download_csv():
+    """下载当前运行的 CSV 结果文件。"""
+    csv_path = _runner.results().get("csv_path")
+    if not csv_path:
+        return jsonify({"ok": False, "error": "暂无结果文件"}), 404
+    p = Path(csv_path)
+    if not p.exists():
+        return jsonify({"ok": False, "error": f"文件不存在: {csv_path}"}), 404
+    return send_file(p, as_attachment=True, download_name=p.name)
 
 
 @app.route("/stream")
