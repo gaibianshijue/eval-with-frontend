@@ -155,6 +155,9 @@ class BenchmarkRunner:
         self._completed_count: int = 0
         # evalscope 内部使用全局 asyncio.Event，多线程并发调用会冲突，需串行化
         self._evalscope_lock = threading.Lock()
+        # 结构化结果存储（供前端实时展示和下载）
+        self._results: list[dict] = []
+        self._results_lock = threading.Lock()
 
     # ---------- public ----------
     def start(self, config_dict: dict) -> tuple[bool, str]:
@@ -199,6 +202,8 @@ class BenchmarkRunner:
             self._progress["api_key_count"] = num_keys
             self._progress["run_id"] = ts
             self._completed_count = 0
+            with self._results_lock:
+                self._results = []
 
             self._thread = threading.Thread(
                 target=self._worker, args=(cfg,), name="BenchmarkRunner", daemon=True,
@@ -235,6 +240,21 @@ class BenchmarkRunner:
         }
 
     # ---------- internal ----------
+    def results(self) -> dict:
+        """返回累积的结果行列表和 CSV 路径（供前端 /results 和 /download/csv 使用）。"""
+        with self._results_lock:
+            return {
+                "results": list(self._results),
+                "csv_path": str(self._csv_path) if self._csv_path else None,
+            }
+
+    def _broadcast_result(self, row_dict: dict) -> None:
+        """通过 SSE 广播结构化结果，同时追加到 _results 列表。"""
+        with self._results_lock:
+            self._results.append(row_dict)
+        # 用特殊前缀与普通日志区分，前端 JS 检测此前缀解析 JSON
+        self._broadcast(f"__RESULT__:{json.dumps(row_dict, ensure_ascii=False)}")
+
     def _empty_progress(self) -> dict:
         return {
             "current": 0, "total": 0,
@@ -450,6 +470,7 @@ class BenchmarkRunner:
                                 api_key_index=key_idx + 1,
                             )
                             run_results.append(run)
+                            self._broadcast_result(row)
                             self._broadcast(
                                 f"[{key_label}] [ok] {key}: TTFT={row['TTFT_Avg(s)']}s "
                                 f"TPOT={row['TPOT_Avg(s)']}s "
@@ -465,13 +486,15 @@ class BenchmarkRunner:
                     # 一组 cr 的所有 repeat 跑完，算 AVG
                     if cfg.test_repeats > 1 and run_results:
                         try:
-                            writer.write_avg(
+                            avg_row = writer.write_avg(
                                 task_type=task_type,
                                 prompt_length=io.input,
                                 max_tokens=io.output,
                                 runs=run_results,
                                 api_key_index=key_idx + 1,
                             )
+                            if avg_row:
+                                self._broadcast_result(avg_row)
                             self._broadcast(f"[{key_label}] [avg] 写入 {len(run_results)} 次重复的平均值")
                         except Exception as e:  # noqa: BLE001
                             self._broadcast(f"[{key_label}] [error] 写 AVG 失败: {e}")

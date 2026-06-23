@@ -133,6 +133,25 @@ h1 { font-size: 1.4rem; margin: 0 0 4px; }
 .log-box .err { color: #f38ba8; }
 .log-box .hl  { color: #f9e2af; }
 
+/* ========== results table ========== */
+.results-body { max-height: 360px; overflow-y: auto; }
+.results-table-wrap { overflow-x: auto; }
+#results-table {
+    width: 100%; border-collapse: collapse;
+    font-size: .72rem; font-family: "Cascadia Code", "Fira Code", monospace;
+}
+#results-table th, #results-table td {
+    padding: 4px 6px; border: 1px solid #e9ecef; white-space: nowrap; text-align: right;
+}
+#results-table th {
+    background: #f8f9fc; color: #555; font-weight: 600;
+    position: sticky; top: 0; z-index: 1; text-align: center; line-height: 1.3;
+}
+#results-table td:nth-child(2) { text-align: center; }
+#results-table tr:nth-child(even) { background: #fafbfc; }
+#results-table tr.row-avg { background: #eef3ff; font-weight: 600; }
+#results-table tr.row-avg td { color: #3b6aea; }
+
 /* ========== responsive ========== */
 @media (max-width: 860px) {
     .row { flex-direction: column; }
@@ -275,6 +294,43 @@ h1 { font-size: 1.4rem; margin: 0 0 4px; }
 </div>
 </div>
 
+<!-- 结果 -->
+<div class="card" id="results-card" style="display:none;">
+<div class="card-header" style="display:flex;justify-content:space-between;align-items:center;">
+    <span>📊 运行结果</span>
+    <button class="btn btn-outline btn-sm" id="btn-download-csv">📥 下载 CSV</button>
+</div>
+<div class="card-body results-body" style="padding:0;">
+    <div class="results-table-wrap">
+        <table id="results-table">
+            <thead>
+                <tr>
+                    <th>#</th>
+                    <th>任务</th>
+                    <th>输入</th>
+                    <th>输出</th>
+                    <th>并发</th>
+                    <th>请求</th>
+                    <th>Latency<br>Avg(s)</th>
+                    <th>Latency<br>P90(s)</th>
+                    <th>TTFT<br>Avg(s)</th>
+                    <th>TTFT<br>P90(s)</th>
+                    <th>TPOT<br>Avg(s)</th>
+                    <th>ITL<br>Avg(s)</th>
+                    <th>实际输入</th>
+                    <th>实际输出</th>
+                    <th>输出吞吐<br>(tok/s)</th>
+                    <th>RPS</th>
+                    <th>总吞吐<br>(tok/s)</th>
+                    <th>重复</th>
+                </tr>
+            </thead>
+            <tbody id="results-tbody"></tbody>
+        </table>
+    </div>
+</div>
+</div>
+
 <!-- 日志 -->
 <div class="card" style="display:flex;flex-direction:column;flex:1;">
 <div class="card-header" style="display:flex;justify-content:space-between;">
@@ -324,6 +380,9 @@ const DOM = {
     progressDetail:  $('progress-detail'),
     logBox:          $('log-box'),
     logCount:        $('log-count'),
+    resultsCard:     $('results-card'),
+    resultsTbody:    $('results-tbody'),
+    btnDownloadCsv:  $('btn-download-csv'),
 };
 
 // ========== dynamic row helpers ==========
@@ -523,6 +582,63 @@ function collectConfig() {
     };
 }
 
+// ========== results table ==========
+const RESULT_COLS = [
+    'api_key_index', 'task_type', 'Prompt_length', 'Max_tokens',
+    'Number_of_concurrency', 'Total_requests', 'Avg_Latency(s)', 'Latency_P90(s)',
+    'TTFT_Avg(s)', 'TTFT_P90(s)', 'TPOT_Avg(s)', 'Avg_Inter_Token_Latency(s)',
+    'Avg_Input_Tokens', 'Avg_Output_Tokens', 'Output_through(tok/s)', 'RPS(req/s)',
+    'Total_token_through(tok/s)', 'repeat_num'
+];
+
+function addResultRow(row) {
+    DOM.resultsCard.style.display = '';
+    const tr = document.createElement('tr');
+    if (row.repeat_num === 'AVG') tr.className = 'row-avg';
+    for (const col of RESULT_COLS) {
+        const td = document.createElement('td');
+        let v = row[col];
+        if (v === undefined || v === null) v = '';
+        // 请求列：Total / Succeed
+        if (col === 'Total_requests' && row['Succeed_requests'] !== undefined) {
+            v = v + ' / ' + row['Succeed_requests'];
+        }
+        td.textContent = v;
+        tr.appendChild(td);
+    }
+    DOM.resultsTbody.appendChild(tr);
+    // 自动滚动到底部
+    const wrap = DOM.resultsTbody.closest('.results-body');
+    if (wrap) wrap.scrollTop = wrap.scrollHeight;
+}
+
+function loadExistingResults() {
+    fetch('/results').then(r => r.json()).then(data => {
+        if (data.results && data.results.length) {
+            DOM.resultsTbody.innerHTML = '';
+            data.results.forEach(row => addResultRow(row));
+        }
+    }).catch(() => {});
+}
+
+function downloadCsv() {
+    fetch('/download/csv').then(r => {
+        if (!r.ok) throw new Error('暂无结果文件');
+        return r.blob();
+    }).then(blob => {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'results.csv';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    }).catch(err => alert('下载失败: ' + err.message));
+}
+
+DOM.btnDownloadCsv.addEventListener('click', downloadCsv);
+
 // ========== SSE log ==========
 let eventSource = null;
 let logLineCount = 0;
@@ -532,6 +648,14 @@ function connectSSE() {
     eventSource = new EventSource('/stream');
     eventSource.onmessage = e => {
         if (!e.data) return;
+        // 结构化结果行：前缀 __RESULT__: 后跟 JSON
+        if (e.data.startsWith('__RESULT__:')) {
+            try {
+                const row = JSON.parse(e.data.slice('__RESULT__:'.length));
+                addResultRow(row);
+            } catch (_) {}
+            return;
+        }
         // 处理 \r 行（进度条行）
         const lines = e.data.split('\r').filter(Boolean);
         const last = lines.pop() || '';
@@ -652,6 +776,8 @@ DOM.btnStart.addEventListener('click', async () => {
     DOM.btnStart.disabled = true;
     DOM.btnStop.disabled = true;
     clearLog();
+    DOM.resultsTbody.innerHTML = '';
+    DOM.resultsCard.style.display = 'none';
     appendLog('=== 正在提交配置... ===');
 
     try {
@@ -729,6 +855,7 @@ initDynamicRows();
 loadFromLS();
 setupAutoSave();
 pollState();
+loadExistingResults();
 })();
 </script>
 </body>
