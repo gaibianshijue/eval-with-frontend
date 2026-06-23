@@ -148,10 +148,20 @@ h1 { font-size: 1.4rem; margin: 0 0 4px; }
     background: #f8f9fc; color: #555; font-weight: 600;
     position: sticky; top: 0; z-index: 1; text-align: center; line-height: 1.3;
 }
+#results-table td:nth-child(1) { text-align: center; font-weight: 600; }
 #results-table td:nth-child(2) { text-align: center; }
 #results-table tr:nth-child(even) { background: #fafbfc; }
 #results-table tr.row-avg { background: #eef3ff; font-weight: 600; }
 #results-table tr.row-avg td { color: #3b6aea; }
+/* API Key 行颜色区分 */
+#results-table tr.key-1 td:first-child { border-left: 3px solid #4a7cf7; }
+#results-table tr.key-2 td:first-child { border-left: 3px solid #2ecc71; }
+#results-table tr.key-3 td:first-child { border-left: 3px solid #e67e22; }
+#results-table tr.key-4 td:first-child { border-left: 3px solid #9b59b6; }
+#results-table tr.key-5 td:first-child { border-left: 3px solid #e74c3c; }
+#results-table tr.key-6 td:first-child { border-left: 3px solid #1abc9c; }
+#results-table tr.key-7 td:first-child { border-left: 3px solid #f39c12; }
+#results-table tr.key-8 td:first-child { border-left: 3px solid #34495e; }
 
 /* ========== responsive ========== */
 @media (max-width: 860px) {
@@ -391,7 +401,8 @@ function createApiKeyRow(value) {
     const div = document.createElement('div');
     div.className = 'dynamic-row';
     div.innerHTML = `
-        <input class="api-key-input" type="password" value="${value || ''}" placeholder="sk-..." style="width:280px;">
+        <input class="api-key-input" type="password" value="${value || ''}" placeholder="sk-..." style="width:252px;">
+        <button class="toggle-vis-btn" title="显示/隐藏" style="background:none;border:none;cursor:pointer;color:#888;font-size:.9rem;padding:0 2px;">👁</button>
         <button class="del-btn" title="删除">✕</button>
     `;
     div.querySelector('.del-btn').addEventListener('click', () => {
@@ -402,6 +413,16 @@ function createApiKeyRow(value) {
         }
     });
     div.querySelector('.api-key-input').addEventListener('input', () => saveToLS());
+    div.querySelector('.toggle-vis-btn').addEventListener('click', function() {
+        const inp = div.querySelector('.api-key-input');
+        if (inp.type === 'password') {
+            inp.type = 'text';
+            this.textContent = '🔒';
+        } else {
+            inp.type = 'password';
+            this.textContent = '👁';
+        }
+    });
     return div;
 }
 
@@ -596,10 +617,19 @@ function addResultRow(row) {
     DOM.resultsCard.style.display = '';
     const tr = document.createElement('tr');
     if (row.repeat_num === 'AVG') tr.className = 'row-avg';
+    // 按 API Key 区分行颜色
+    const keyIdx = parseInt(row.api_key_index) || 1;
+    const keyClass = 'key-' + ((keyIdx - 1) % 8 + 1);
+    if (tr.className) tr.className += ' ' + keyClass;
+    else tr.className = keyClass;
     for (const col of RESULT_COLS) {
         const td = document.createElement('td');
         let v = row[col];
         if (v === undefined || v === null) v = '';
+        // API Key 序号显示为"用户N"
+        if (col === 'api_key_index') {
+            v = '用户' + v;
+        }
         // 请求列：Total / Succeed
         if (col === 'Total_requests' && row['Succeed_requests'] !== undefined) {
             v = v + ' / ' + row['Succeed_requests'];
