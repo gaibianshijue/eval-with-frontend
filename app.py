@@ -157,4 +157,4 @@ if __name__ == "__main__":
     print(f"[web_demo] project dir: {PROJECT_DIR}")
     print(f"[web_demo] history dir: {HISTORY_DIR}")
     print(f"[web_demo] backend:     evalscope Python SDK (in-process)")
-    app.run(host="127.0.0.1", port=5000, debug=False, threaded=True)
+    app.run(host="0.0.0.0", port=5000, debug=False, threaded=True)
