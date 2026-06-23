@@ -24,6 +24,12 @@ from evalscope.utils.logger import get_logger as get_evalscope_logger
 from csv_writer import CsvWriter
 
 
+# ---------- 自定义异常 ----------
+class StopRequested(Exception):
+    """用户请求停止时抛出，用于从阻塞的 evalscope 调用中跳出。"""
+    pass
+
+
 # ---------- 配置 dataclass（轻量校验，区别于 Arguments 的完整字段）----------
 @dataclass(frozen=True)
 class IOGroup:
@@ -312,32 +318,55 @@ class BenchmarkRunner:
             time.sleep(0.5)
 
     def _run_perf_benchmark_safe(self, args: Arguments) -> dict:
-        """线程安全的 run_perf_benchmark 封装。
+        """线程安全的 run_perf_benchmark 封装，支持通过 _stop_event 中断。
 
-        evalscope 内部使用模块级 asyncio.Event 和 new_event_loop()，
-        多线程并发调用会导致事件循环冲突（Event loop is closed /
-        Task was destroyed / KeyError: fd not registered）。
-        通过加锁串行化 + 显式管理事件循环生命周期来解决。
+        evalscope 的 run_perf_benchmark 是同步阻塞调用，没有外部取消 API。
+        将其放在子线程中执行，主线程轮询 _stop_event：
+        - 如果 _stop_event 被设置，不再等待子线程返回，抛出 StopRequested 退出循环。
+        - evalscope 内部使用全局 asyncio.Event，多线程需串行化。
+        - 每次调用创建新事件循环并正确关闭，防止资源泄漏。
         """
-        with self._evalscope_lock:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                return run_perf_benchmark(args)
-            finally:
-                # 清理 pending Task 并关闭循环，防止资源泄漏
+        import concurrent.futures
+
+        result_box: list = []
+        exc_box: list = []
+
+        def _target():
+            with self._evalscope_lock:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
                 try:
-                    pending = asyncio.all_tasks(loop)
-                    for task in pending:
-                        task.cancel()
-                    if pending:
-                        loop.run_until_complete(
-                            asyncio.gather(*pending, return_exceptions=True)
-                        )
-                except Exception:  # noqa: BLE001
-                    pass
+                    ret = run_perf_benchmark(args)
+                    result_box.append(ret)
+                except Exception as e:  # noqa: BLE001
+                    exc_box.append(e)
                 finally:
-                    loop.close()
+                    try:
+                        pending = asyncio.all_tasks(loop)
+                        for task in pending:
+                            task.cancel()
+                        if pending:
+                            loop.run_until_complete(
+                                asyncio.gather(*pending, return_exceptions=True)
+                            )
+                    except Exception:  # noqa: BLE001
+                        pass
+                    finally:
+                        loop.close()
+
+        t = threading.Thread(target=_target, daemon=True)
+        t.start()
+        # 轮询等待，同时检查停止信号
+        while t.is_alive():
+            t.join(timeout=1.0)
+            if self._stop_event.is_set():
+                raise StopRequested("用户请求停止")
+
+        if exc_box:
+            raise exc_box[0]
+        if not result_box:
+            raise StopRequested("用户请求停止")
+        return result_box[0]
 
     def _build_arguments(self, cfg: RunConfig, task_type: str, io: IOGroup, cr: CRGroup,
                          api_key: str = "") -> Arguments:
@@ -415,86 +444,96 @@ class BenchmarkRunner:
     def _run_key_loop(self, cfg: RunConfig, writer: CsvWriter,
                       api_key: str, key_idx: int, key_label: str) -> None:
         """单个 API Key 的完整子测试循环。多 Key 时由 ThreadPoolExecutor 并发调用。"""
-        for task_type in cfg.task_types:
-            self._broadcast(f"[{key_label}] --- 任务类型: {task_type} ---")
-            for io in cfg.input_output_groups:
-                for cr in cfg.concurrency_request_groups:
-                    run_results = []
-                    for repeat in range(1, cfg.test_repeats + 1):
-                        if self._stop_event.is_set():
-                            self._broadcast(f"[{key_label}] 收到停止信号，退出")
+        try:
+            for task_type in cfg.task_types:
+                self._broadcast(f"[{key_label}] --- 任务类型: {task_type} ---")
+                for io in cfg.input_output_groups:
+                    for cr in cfg.concurrency_request_groups:
+                        run_results = []
+                        for repeat in range(1, cfg.test_repeats + 1):
+                            if self._stop_event.is_set():
+                                self._broadcast(f"[{key_label}] 收到停止信号，退出")
+                                with self._progress_lock:
+                                    self._state = "stopped"
+                                return
+
                             with self._progress_lock:
-                                self._state = "stopped"
-                            return
-
-                        with self._progress_lock:
-                            self._completed_count += 1
-                            counter = self._completed_count
-                        self._progress.update({
-                            "current": counter,
-                            "task_type": task_type,
-                            "io": f"输入{io.input}/输出{io.output}",
-                            "concurrency": f"并发{cr.parallel}",
-                            "repeat": f"{repeat}/{cfg.test_repeats}",
-                        })
-                        self._broadcast(
-                            f"=== [{key_label}] 测试 {counter}/{self._progress['total']}: "
-                            f"task={task_type} repeat={repeat}/{cfg.test_repeats} "
-                            f"input={io.input} output={io.output} "
-                            f"parallel={cr.parallel} number={cr.number} ==="
-                        )
-
-                        try:
-                            args = self._build_arguments(cfg, task_type, io, cr, api_key=api_key)
-                            results = self._run_perf_benchmark_safe(args)
-                        except Exception as e:  # noqa: BLE001
-                            self._broadcast(f"[{key_label}] [error] evalscope 调用失败: {e}")
-                            self._broadcast(traceback.format_exc())
-                            continue
-
-                        key = f"parallel_{cr.parallel}_number_{cr.number}"
-                        run = results.get(key) or next(iter(results.values()), None)
-                        if not run or "metrics" not in run:
-                            self._broadcast(f"[{key_label}] [warn] 未拿到 {key} 的结果，跳过 CSV")
-                            continue
-
-                        try:
-                            row = writer.write_run(
-                                task_type=task_type,
-                                repeat_num=repeat,
-                                prompt_length=io.input,
-                                max_tokens=io.output,
-                                metrics=run["metrics"],
-                                percentiles=run["percentiles"],
-                                output_dir=str(self._run_dir / "outputs"),
-                                api_key_index=key_idx + 1,
-                            )
-                            run_results.append(run)
-                            self._broadcast_result(row)
+                                self._completed_count += 1
+                                counter = self._completed_count
+                            self._progress.update({
+                                "current": counter,
+                                "task_type": task_type,
+                                "io": f"输入{io.input}/输出{io.output}",
+                                "concurrency": f"并发{cr.parallel}",
+                                "repeat": f"{repeat}/{cfg.test_repeats}",
+                            })
                             self._broadcast(
-                                f"[{key_label}] [ok] {key}: TTFT={row['TTFT_Avg(s)']}s "
-                                f"TPOT={row['TPOT_Avg(s)']}s "
-                                f"OutThr={row['Output_through(tok/s)']}tok/s"
+                                f"=== [{key_label}] 测试 {counter}/{self._progress['total']}: "
+                                f"task={task_type} repeat={repeat}/{cfg.test_repeats} "
+                                f"input={io.input} output={io.output} "
+                                f"parallel={cr.parallel} number={cr.number} ==="
                             )
-                        except Exception as e:  # noqa: BLE001
-                            self._broadcast(f"[{key_label}] [error] 写 CSV 失败: {e}")
 
-                        if counter < self._progress["total"] and cfg.wait_between_tests > 0:
-                            self._broadcast(f"[{key_label}] --- 等待 {cfg.wait_between_tests}s 进入下一测试 ---")
-                            self._sleep_with_stop(cfg.wait_between_tests)
+                            try:
+                                args = self._build_arguments(cfg, task_type, io, cr, api_key=api_key)
+                                results = self._run_perf_benchmark_safe(args)
+                            except StopRequested:
+                                self._broadcast(f"[{key_label}] 收到停止信号，退出")
+                                with self._progress_lock:
+                                    self._state = "stopped"
+                                return
+                            except Exception as e:  # noqa: BLE001
+                                self._broadcast(f"[{key_label}] [error] evalscope 调用失败: {e}")
+                                self._broadcast(traceback.format_exc())
+                                continue
 
-                    # 一组 cr 的所有 repeat 跑完，算 AVG
-                    if cfg.test_repeats > 1 and run_results:
-                        try:
-                            avg_row = writer.write_avg(
-                                task_type=task_type,
-                                prompt_length=io.input,
-                                max_tokens=io.output,
-                                runs=run_results,
-                                api_key_index=key_idx + 1,
-                            )
-                            if avg_row:
-                                self._broadcast_result(avg_row)
-                            self._broadcast(f"[{key_label}] [avg] 写入 {len(run_results)} 次重复的平均值")
-                        except Exception as e:  # noqa: BLE001
-                            self._broadcast(f"[{key_label}] [error] 写 AVG 失败: {e}")
+                            key = f"parallel_{cr.parallel}_number_{cr.number}"
+                            run = results.get(key) or next(iter(results.values()), None)
+                            if not run or "metrics" not in run:
+                                self._broadcast(f"[{key_label}] [warn] 未拿到 {key} 的结果，跳过 CSV")
+                                continue
+
+                            try:
+                                row = writer.write_run(
+                                    task_type=task_type,
+                                    repeat_num=repeat,
+                                    prompt_length=io.input,
+                                    max_tokens=io.output,
+                                    metrics=run["metrics"],
+                                    percentiles=run["percentiles"],
+                                    output_dir=str(self._run_dir / "outputs"),
+                                    api_key_index=key_idx + 1,
+                                )
+                                run_results.append(run)
+                                self._broadcast_result(row)
+                                self._broadcast(
+                                    f"[{key_label}] [ok] {key}: TTFT={row['TTFT_Avg(s)']}s "
+                                    f"TPOT={row['TPOT_Avg(s)']}s "
+                                    f"OutThr={row['Output_through(tok/s)']}tok/s"
+                                )
+                            except Exception as e:  # noqa: BLE001
+                                self._broadcast(f"[{key_label}] [error] 写 CSV 失败: {e}")
+
+                            if counter < self._progress["total"] and cfg.wait_between_tests > 0:
+                                self._broadcast(f"[{key_label}] --- 等待 {cfg.wait_between_tests}s 进入下一测试 ---")
+                                self._sleep_with_stop(cfg.wait_between_tests)
+
+                        # 一组 cr 的所有 repeat 跑完，算 AVG
+                        if cfg.test_repeats > 1 and run_results:
+                            try:
+                                avg_row = writer.write_avg(
+                                    task_type=task_type,
+                                    prompt_length=io.input,
+                                    max_tokens=io.output,
+                                    runs=run_results,
+                                    api_key_index=key_idx + 1,
+                                )
+                                if avg_row:
+                                    self._broadcast_result(avg_row)
+                                self._broadcast(f"[{key_label}] [avg] 写入 {len(run_results)} 次重复的平均值")
+                            except Exception as e:  # noqa: BLE001
+                                self._broadcast(f"[{key_label}] [error] 写 AVG 失败: {e}")
+        except StopRequested:
+            self._broadcast(f"[{key_label}] 收到停止信号，退出")
+            with self._progress_lock:
+                self._state = "stopped"
