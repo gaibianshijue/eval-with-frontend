@@ -55,6 +55,13 @@ def _p90_seconds(percentiles, metric_field: str, *, is_ms_field: bool = False) -
     return float(val) / 1000.0 if is_ms_field else float(val)
 
 
+def _ms_to_s(v) -> float:
+    """毫秒转秒。evalscope 的 avg_ttft / avg_tpot / avg_itl 单位是 ms，CSV 统一用秒。"""
+    if v is None:
+        return 0.0
+    return float(v) / 1000.0
+
+
 def _to_row(
     task_type: str,
     repeat_label: str,
@@ -79,10 +86,10 @@ def _to_row(
         _fmt(getattr(metrics, "succeed_requests", 0)),
         _fmt(getattr(metrics, "avg_latency", 0.0)),
         _fmt(_p90_seconds(percentiles, "latency", is_ms_field=False)),
-        _fmt(getattr(metrics, "avg_ttft", 0.0)),
+        _fmt(_ms_to_s(getattr(metrics, "avg_ttft", 0.0))),
         _fmt(_p90_seconds(percentiles, "ttft", is_ms_field=True)),
-        _fmt(getattr(metrics, "avg_tpot", 0.0)),
-        _fmt(getattr(metrics, "avg_itl", 0.0)),
+        _fmt(_ms_to_s(getattr(metrics, "avg_tpot", 0.0))),
+        _fmt(_ms_to_s(getattr(metrics, "avg_itl", 0.0))),
         _fmt(getattr(metrics, "avg_input_tokens", 0.0)),
         _fmt(getattr(metrics, "avg_output_tokens", 0.0)),
         _fmt(getattr(metrics, "output_token_throughput", 0.0)),
@@ -164,10 +171,10 @@ class CsvWriter:
             _fmt(getattr(m0, "succeed_requests", 0)),
             _fmt(_avg(lambda r: r["metrics"].avg_latency)),
             _fmt(_avg(lambda r: _p90_seconds(r["percentiles"], "latency"))),
-            _fmt(_avg(lambda r: r["metrics"].avg_ttft)),
+            _fmt(_avg(lambda r: _ms_to_s(r["metrics"].avg_ttft))),
             _fmt(_avg(lambda r: _p90_seconds(r["percentiles"], "ttft", is_ms_field=True))),
-            _fmt(_avg(lambda r: r["metrics"].avg_tpot)),
-            _fmt(_avg(lambda r: r["metrics"].avg_itl)),
+            _fmt(_avg(lambda r: _ms_to_s(r["metrics"].avg_tpot))),
+            _fmt(_avg(lambda r: _ms_to_s(r["metrics"].avg_itl))),
             _fmt(_avg(lambda r: r["metrics"].avg_input_tokens)),
             _fmt(_avg(lambda r: r["metrics"].avg_output_tokens)),
             _fmt(_avg(lambda r: r["metrics"].output_token_throughput)),
