@@ -51,7 +51,7 @@ python app.py
 |---|---|
 | model_name | `model` |
 | api_url | `url` |
-| tokenizer_path | `tokenizer_path` |
+| tokenizer_path | `tokenizer_path`（选择 `random` 任务时必填，等价于 evalscope `--tokenizer-path`） |
 | openai_api_key | `api_key`（仅传给 SDK，不落盘） |
 | openclaw_dataset_path | `dataset_path` |
 | openclaw_dataset_name | `dataset`（默认 `line_by_line`） |
@@ -62,7 +62,7 @@ python app.py
 | log_every_n_query | `log_every_n_query` |
 | prefix_length | `prefix_length` |
 | wait_between_tests | 各 sub-test 之间 sleep（runner 自管） |
-| task_types | random / openclaw（runner 内分支处理） |
+| task_types | random / openclaw（runner 内分支处理；`random` 需要同时提供 `tokenizer_path`） |
 
 固定参数：`api="openai"`，`extra_args={"ignore_eos": True}`，`read_timeout=600`，`connect_timeout=30`，`enable_progress_tracker=True`。
 
@@ -99,6 +99,10 @@ Total_token_through(tok/s), output_dir
 | 临时 .sh 落盘含密钥 | 不再生成任何脚本 |
 | 系统命令依赖（bash / jq / bc） | 纯 Python |
 | WSL vs Git Bash 冲突 | 不再需要 bash |
+
+## random 任务注意事项
+
+选择 `random` 任务时必须填写 `tokenizer_path`。evalscope 的 random dataset 需要 tokenizer 来生成/统计随机 prompt token 长度；未填写时前端会在提交前拦截，后端也会在 `/start` 阶段拒绝启动并返回明确错误信息。
 
 ## 限制（demo 阶段）
 

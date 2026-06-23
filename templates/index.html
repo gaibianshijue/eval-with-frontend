@@ -166,8 +166,8 @@ h1 { font-size: 1.4rem; margin: 0 0 4px; }
         <input id="api_url" type="url" placeholder="http://192.168.7.206:8099/v1/chat/completions">
     </div>
     <div class="form-group">
-        <label for="tokenizer_path">Tokenizer 路径</label>
-        <input id="tokenizer_path" type="text" placeholder="/ainfs-nv-prod/.../tokenizer">
+        <label for="tokenizer_path">Tokenizer 路径（random 必填）</label>
+        <input id="tokenizer_path" type="text" placeholder="random 任务必填，如 /ainfs-nv-prod/.../tokenizer">
     </div>
     <div class="form-group">
         <label>API Keys（多用户并发）</label>
@@ -638,6 +638,13 @@ DOM.btnStart.addEventListener('click', async () => {
     // 简单前端验证
     if (!cfg.openai_api_keys.length) { alert('请至少填写一个 API Key'); return; }
     if (!cfg.task_types.length) { alert('请至少选一项任务类型'); return; }
+    DOM.tokenizerPath.classList.remove('error');
+    if (cfg.task_types.includes('random') && !cfg.tokenizer_path) {
+        DOM.tokenizerPath.classList.add('error');
+        DOM.tokenizerPath.focus();
+        alert('选择 random 任务时必须填写 Tokenizer 路径');
+        return;
+    }
     if (!cfg.input_output_groups.length) { alert('输入输出长度组至少需要一行'); return; }
     if (!cfg.concurrency_request_groups.length) { alert('并发请求组至少需要一行'); return; }
 

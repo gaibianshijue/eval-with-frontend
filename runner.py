@@ -99,6 +99,8 @@ class RunConfig:
         for t in self.task_types:
             if t not in ("random", "openclaw"):
                 return f"未知 task_type: {t}"
+            if t == "random" and not self.tokenizer_path:
+                return "选择了 random 任务但未填写 tokenizer_path（evalscope random dataset 需要 --tokenizer-path）"
             if t == "openclaw" and not self.openclaw_dataset_path:
                 return "选择了 openclaw 任务但未填写 openclaw_dataset_path"
         if not self.task_types:
