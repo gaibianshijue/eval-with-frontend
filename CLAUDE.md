@@ -59,4 +59,6 @@ python app.py  # 监听 0.0.0.0:5000
 
 - `run_perf_benchmark` 内部使用模块级 `asyncio.Event`，多线程并发需串行化（`_evalscope_lock`）
 - `random` 任务必须提供 `tokenizer_path`，`RunConfig.validate()` 做了前置校验
+- `manual` 任务：前端录入 `{question, answer}` 列表（question 必填、answer 选填仅记录），`start()` 时把问题逐行 JSON 编码落盘到 `history/<ts>/manual_dataset.jsonl`，复用 evalscope `line_by_line` 插件读取（每行一个 JSON 字符串，可含换行）
+- `stream` 参数（流式/非流式）经 `RunConfig.stream` 透传给 `Arguments.stream`，默认 True
 - evalscope 的 `avg_ttft`/`avg_tpot`/`avg_itl` 单位是 ms，P90 的 `ttft`/`tpot` 也是 ms，`_p90_seconds` 已处理转换

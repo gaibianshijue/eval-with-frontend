@@ -58,6 +58,8 @@ class RunConfig:
     task_types: list[str]
     input_output_groups: list[IOGroup]
     concurrency_request_groups: list[CRGroup]
+    stream: bool = True
+    manual_dataset: list[dict] = field(default_factory=list)  # [{question, answer}]，answer 可空
 
     @classmethod
     def from_dict(cls, d: dict) -> "RunConfig":
@@ -84,6 +86,8 @@ class RunConfig:
                                  for g in (d.get("input_output_groups") or [])],
             concurrency_request_groups=[CRGroup(int(g["parallel"]), int(g["number"]))
                                         for g in (d.get("concurrency_request_groups") or [])],
+            stream=bool(d.get("stream", True)),
+            manual_dataset=list(d.get("manual_dataset") or []),
         )
 
     def to_safe_dict(self) -> dict:
@@ -104,12 +108,17 @@ class RunConfig:
         if not self.openai_api_keys:
             return "至少需要填写一个 API Key"
         for t in self.task_types:
-            if t not in ("random", "openclaw"):
+            if t not in ("random", "openclaw", "manual"):
                 return f"未知 task_type: {t}"
             if t == "random" and not self.tokenizer_path:
                 return "选择了 random 任务但未填写 tokenizer_path（evalscope random dataset 需要 --tokenizer-path）"
             if t == "openclaw" and not self.openclaw_dataset_path:
                 return "选择了 openclaw 任务但未填写 openclaw_dataset_path"
+            if t == "manual":
+                qs = [str(m.get("question", "")).strip()
+                      for m in self.manual_dataset if str(m.get("question", "")).strip()]
+                if not qs:
+                    return "选择了 manual 任务但未填写任何问题（question 必填）"
         if not self.task_types:
             return "task_types 至少选一项"
         if not self.input_output_groups:
@@ -153,6 +162,7 @@ class BenchmarkRunner:
         self._error: str = ""
         self._run_dir: Optional[Path] = None
         self._csv_path: Optional[Path] = None
+        self._manual_dataset_path: Optional[Path] = None
         self._started_at: Optional[str] = None
         self._progress: dict = self._empty_progress()
         self._log_handler: Optional[SSELogHandler] = None
@@ -189,6 +199,18 @@ class BenchmarkRunner:
                 encoding="utf-8",
             )
             self._csv_path = self._run_dir / f"results_{cfg.model_name}_{ts}.csv"
+
+            # manual 任务：把问题落盘成 line_by_line 兼容的 jsonl（每行一个 JSON 字符串）
+            if "manual" in cfg.task_types:
+                self._manual_dataset_path = self._run_dir / "manual_dataset.jsonl"
+                qs = [str(m.get("question", "")).strip()
+                      for m in cfg.manual_dataset if str(m.get("question", "")).strip()]
+                self._manual_dataset_path.write_text(
+                    "\n".join(json.dumps(q, ensure_ascii=False) for q in qs) + ("\n" if qs else ""),
+                    encoding="utf-8",
+                )
+            else:
+                self._manual_dataset_path = None
 
             # 接入 evalscope logger
             self._attach_logger()
@@ -387,6 +409,7 @@ class BenchmarkRunner:
             enable_progress_tracker=True,
             outputs_dir=str(self._run_dir / "outputs"),
             debug=False,
+            stream=cfg.stream,
         )
         if task_type == "random":
             return Arguments(
@@ -394,6 +417,13 @@ class BenchmarkRunner:
                 dataset="random",
                 min_prompt_length=io.input,
                 max_prompt_length=io.input,
+            )
+        if task_type == "manual":
+            # 复用 line_by_line 插件读取落盘的问题文件；每行是一个 JSON 字符串
+            return Arguments(
+                **common,
+                dataset="line_by_line",
+                dataset_path=str(self._manual_dataset_path),
             )
         # openclaw
         return Arguments(

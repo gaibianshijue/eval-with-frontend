@@ -76,6 +76,19 @@ h1 { font-size: 1.4rem; margin: 0 0 4px; }
 }
 .add-btn:hover { border-color: #4a7cf7; color: #4a7cf7; }
 
+.manual-row {
+    display: flex; align-items: flex-start; gap: 6px; margin-bottom: 6px;
+}
+.manual-row .manual-q, .manual-row .manual-a {
+    padding: 4px 8px; border: 1px solid #d0d5dd; border-radius: 4px;
+    font-size: .82rem; outline: none; font-family: inherit;
+}
+.manual-row .manual-q { flex: 1.2; min-width: 0; }
+.manual-row .manual-a { flex: 1; min-width: 0; }
+.manual-row .manual-q:focus, .manual-row .manual-a:focus { border-color: #4a7cf7; box-shadow: 0 0 0 2px rgba(74,124,247,.15); }
+.manual-row .manual-q.error { border-color: #e74c3c; }
+.manual-row .del-btn { margin-top: 2px; }
+
 .checkbox-group {
     display: flex; gap: 16px; padding: 4px 0;
 }
@@ -224,6 +237,18 @@ h1 { font-size: 1.4rem; margin: 0 0 4px; }
 </div>
 </div>
 
+<!-- 手动数据集 -->
+<div class="card">
+<div class="card-header">✍️ 手动数据集（manual 任务使用）</div>
+<div class="card-body">
+    <div style="font-size:.78rem;color:#777;margin-bottom:6px;">
+        问题必填，答案非必填（仅记录，暂不参与评估）；不填答案即纯性能测试。
+    </div>
+    <div id="manual-dataset-container"></div>
+    <button class="add-btn" id="add-manual-btn">+ 添加问题</button>
+</div>
+</div>
+
 <!-- 执行参数 -->
 <div class="card">
 <div class="card-header">⚙️ 执行参数</div>
@@ -244,6 +269,13 @@ h1 { font-size: 1.4rem; margin: 0 0 4px; }
         <label>测试间隔 (s)</label>
         <input id="wait_between_tests" type="number" min="0" value="60">
     </div>
+    <div class="form-group-inline">
+        <label>响应模式</label>
+        <select id="stream_mode" style="width:120px;padding:5px 8px;border:1px solid #d0d5dd;border-radius:4px;font-size:.82rem;">
+            <option value="true">流式 (stream)</option>
+            <option value="false">非流式 (non-stream)</option>
+        </select>
+    </div>
 </div>
 </div>
 
@@ -258,6 +290,7 @@ h1 { font-size: 1.4rem; margin: 0 0 4px; }
         <div class="checkbox-group">
             <label><input type="checkbox" class="task-type-cb" value="random" checked> random</label>
             <label><input type="checkbox" class="task-type-cb" value="openclaw"> openclaw</label>
+            <label><input type="checkbox" class="task-type-cb" value="manual"> manual（手动输入）</label>
         </div>
     </div>
 
@@ -377,10 +410,13 @@ const DOM = {
     logEveryN:       $('log_every_n_query'),
     prefixLength:    $('prefix_length'),
     waitBetween:     $('wait_between_tests'),
+    streamMode:      $('stream_mode'),
     ioContainer:     $('io-group-container'),
     crContainer:     $('cr-group-container'),
     addIoBtn:        $('add-io-btn'),
     addCrBtn:        $('add-cr-btn'),
+    manualContainer: $('manual-dataset-container'),
+    addManualBtn:    $('add-manual-btn'),
     btnStart:        $('btn-start'),
     btnStop:         $('btn-stop'),
     btnRefresh:      $('btn-refresh'),
@@ -452,6 +488,22 @@ function createCRRow(parallelVal, numberVal) {
     return div;
 }
 
+function createManualRow(qVal, aVal) {
+    const div = document.createElement('div');
+    div.className = 'manual-row';
+    const q = document.createElement('textarea');
+    q.className = 'manual-q'; q.rows = 1; q.placeholder = '问题（必填）';
+    q.value = qVal || '';
+    const a = document.createElement('textarea');
+    a.className = 'manual-a'; a.rows = 1; a.placeholder = '答案（选填）';
+    a.value = aVal || '';
+    const del = document.createElement('button');
+    del.className = 'del-btn'; del.title = '删除'; del.textContent = '✕';
+    del.addEventListener('click', () => div.remove());
+    div.appendChild(q); div.appendChild(a); div.appendChild(del);
+    return div;
+}
+
 // 初始化默认行
 function initDynamicRows() {
     // API Keys — 默认一行空输入
@@ -475,6 +527,9 @@ function initDynamicRows() {
         {parallel: 256, number: 1280},
     ];
     crDefaults.forEach(d => DOM.crContainer.appendChild(createCRRow(d.parallel, d.number)));
+
+    // 手动数据集 — 默认一行空问题
+    DOM.manualContainer.appendChild(createManualRow('', ''));
 }
 
 DOM.addApiKeyBtn.addEventListener('click', () => {
@@ -485,6 +540,9 @@ DOM.addIoBtn.addEventListener('click', () => {
 });
 DOM.addCrBtn.addEventListener('click', () => {
     DOM.crContainer.appendChild(createCRRow('', ''));
+});
+DOM.addManualBtn.addEventListener('click', () => {
+    DOM.manualContainer.appendChild(createManualRow('', ''));
 });
 
 // ========== localStorage persistence ==========
@@ -502,9 +560,11 @@ function saveToLS() {
         logEveryN: DOM.logEveryN.value,
         prefixLength: DOM.prefixLength.value,
         waitBetween: DOM.waitBetween.value,
+        streamMode: DOM.streamMode.value,
         ioRows: [],
         crRows: [],
         taskTypes: [],
+        manualRows: [],
     };
     DOM.apiKeyContainer.querySelectorAll('.api-key-input').forEach(inp => {
         data.apiKeys.push(inp.value);
@@ -518,6 +578,11 @@ function saveToLS() {
         const p = row.querySelector('.cr-parallel');
         const n = row.querySelector('.cr-number');
         if (p && n) data.crRows.push([p.value, n.value]);
+    });
+    DOM.manualContainer.querySelectorAll('.manual-row').forEach(row => {
+        const q = row.querySelector('.manual-q');
+        const a = row.querySelector('.manual-a');
+        if (q && a) data.manualRows.push([q.value, a.value]);
     });
     document.querySelectorAll('.task-type-cb').forEach(cb => {
         if (cb.checked) data.taskTypes.push(cb.value);
@@ -548,6 +613,7 @@ function loadFromLS() {
     if (data.logEveryN) DOM.logEveryN.value = data.logEveryN;
     if (data.prefixLength) DOM.prefixLength.value = data.prefixLength;
     if (data.waitBetween) DOM.waitBetween.value = data.waitBetween;
+    if (data.streamMode) DOM.streamMode.value = data.streamMode;
 
     if (Array.isArray(data.ioRows) && data.ioRows.length) {
         DOM.ioContainer.innerHTML = '';
@@ -556,6 +622,10 @@ function loadFromLS() {
     if (Array.isArray(data.crRows) && data.crRows.length) {
         DOM.crContainer.innerHTML = '';
         data.crRows.forEach(([p, n]) => DOM.crContainer.appendChild(createCRRow(p, n)));
+    }
+    if (Array.isArray(data.manualRows) && data.manualRows.length) {
+        DOM.manualContainer.innerHTML = '';
+        data.manualRows.forEach(([q, a]) => DOM.manualContainer.appendChild(createManualRow(q, a)));
     }
     if (Array.isArray(data.taskTypes) && data.taskTypes.length) {
         document.querySelectorAll('.task-type-cb').forEach(cb => {
@@ -586,6 +656,13 @@ function collectConfig() {
         const v = inp.value.trim();
         if (v) apiKeys.push(v);
     });
+    // 收集手动数据集（question 必填才纳入）
+    const manual = [];
+    DOM.manualContainer.querySelectorAll('.manual-row').forEach(row => {
+        const q = (row.querySelector('.manual-q').value || '').trim();
+        const a = (row.querySelector('.manual-a').value || '').trim();
+        if (q) manual.push({question: q, answer: a});
+    });
 
     return {
         model_name: DOM.modelName.value.trim(),
@@ -598,9 +675,11 @@ function collectConfig() {
         log_every_n_query: parseInt(DOM.logEveryN.value, 10) || 500,
         prefix_length: parseInt(DOM.prefixLength.value, 10) || 0,
         wait_between_tests: parseInt(DOM.waitBetween.value, 10) || 60,
+        stream: DOM.streamMode.value === 'true',
         task_types: tt,
         input_output_groups: io,
         concurrency_request_groups: cr,
+        manual_dataset: manual,
     };
 }
 
@@ -802,6 +881,12 @@ DOM.btnStart.addEventListener('click', async () => {
     }
     if (!cfg.input_output_groups.length) { alert('输入输出长度组至少需要一行'); return; }
     if (!cfg.concurrency_request_groups.length) { alert('并发请求组至少需要一行'); return; }
+    if (cfg.task_types.includes('manual') && !cfg.manual_dataset.length) {
+        alert('选择了 manual 任务，请至少填写一个问题');
+        const firstQ = DOM.manualContainer.querySelector('.manual-q');
+        if (firstQ) { firstQ.classList.add('error'); firstQ.focus(); }
+        return;
+    }
 
     // 禁用按钮
     DOM.btnStart.disabled = true;
@@ -877,6 +962,7 @@ function setupAutoSave() {
     observer.observe(DOM.apiKeyContainer, {childList: true});
     observer.observe(DOM.ioContainer, {childList: true});
     observer.observe(DOM.crContainer, {childList: true});
+    observer.observe(DOM.manualContainer, {childList: true});
     // checkbox
     document.querySelectorAll('.task-type-cb').forEach(cb => cb.addEventListener('change', onInput));
 }
