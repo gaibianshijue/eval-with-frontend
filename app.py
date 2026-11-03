@@ -16,6 +16,7 @@ from pathlib import Path
 
 from flask import Flask, Response, jsonify, render_template, request, send_file
 
+from evalscope_schema import describe_arguments, parse_perf_command
 from runner import BenchmarkRunner
 
 # ---------- 路径 ----------
@@ -105,6 +106,28 @@ def status():
 def results():
     """返回当前运行累积的所有结果行（供前端实时展示）。"""
     return jsonify(_runner.results())
+
+
+@app.route("/evalscope/schema", methods=["GET"])
+def evalscope_schema():
+    """evalscope perf 全量参数元信息（字段 / 类型 / 默认值 / CLI flag / 帮助 / 分组）。"""
+    try:
+        return jsonify({"ok": True, **describe_arguments()})
+    except Exception as e:  # noqa: BLE001
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/evalscope/parse-command", methods=["POST"])
+def evalscope_parse_command():
+    """解析一条 `evalscope perf ...` 命令，回填前端表单。"""
+    body = request.get_json(force=True, silent=True) or {}
+    command = body.get("command", "")
+    try:
+        return jsonify({"ok": True, **parse_perf_command(command)})
+    except ValueError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+    except Exception as e:  # noqa: BLE001
+        return jsonify({"ok": False, "error": f"解析异常: {e}"}), 500
 
 
 @app.route("/download/csv", methods=["GET"])

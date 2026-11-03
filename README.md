@@ -43,7 +43,10 @@ python app.py
 | `POST /stop`   | 请求停止（当前 sub-test 跑完后退出） |
 | `GET  /state`  | running / state / run_dir |
 | `GET  /status` | 进度（current / total / 当前 task / IO / 并发 / 重复 / ETA） |
-| `GET  /stream` | SSE 流式日志 |
+| `GET  /stream` | SSE 流式日志（含 `__RESULT__:` 结果行） |
+| `GET  /results` | 已累积的结果行 |
+| `GET  /evalscope/schema` | `Arguments` 全量参数元信息（类型 / 默认值 / CLI flag / 分组） |
+| `POST /evalscope/parse-command` | 解析一条 `evalscope perf ...` 命令 → 表单配置 |
 
 ## 配置项 → SDK Arguments 映射
 
@@ -52,7 +55,7 @@ python app.py
 | model_name | `model` |
 | api_url | `url` |
 | tokenizer_path | `tokenizer_path`（选择 `random` 任务时必填，等价于 evalscope `--tokenizer-path`） |
-| openai_api_key | `api_key`（仅传给 SDK，不落盘） |
+| openai_api_keys[] | `api_key`（每个 key 视为一个并行用户；仅传给 SDK，不落盘） |
 | openclaw_dataset_path | `dataset_path` |
 | openclaw_dataset_name | `dataset`（默认 `line_by_line`） |
 | input_output_groups[].input | `min_prompt_length` / `max_prompt_length`（random 任务） |
@@ -63,8 +66,27 @@ python app.py
 | prefix_length | `prefix_length` |
 | wait_between_tests | 各 sub-test 之间 sleep（runner 自管） |
 | task_types | random / openclaw（runner 内分支处理；`random` 需要同时提供 `tokenizer_path`） |
+| evalscope_args{} | 其余 **全部** `Arguments` 字段（键名即字段名），如 `api` / `temperature` / `top_p` / `seed` / `rate` / `open_loop` / `sla_auto_tune` / `multi_turn` / `headers` 等 |
 
-固定参数：`api="openai"`，`extra_args={"ignore_eos": True}`，`read_timeout=600`，`connect_timeout=30`，`enable_progress_tracker=True`。
+内置默认值：`api="openai"`，`extra_args={"ignore_eos": True}`，`read_timeout=600`，`connect_timeout=30`，`enable_progress_tracker=True`。
+其中除 `enable_progress_tracker` 外都可通过 `evalscope_args` 覆盖（`extra_args` 与内置值做并集）。
+
+### 高级参数 / 命令导入
+
+- 前端「evalscope 高级参数」面板由 `GET /evalscope/schema` 反射 `evalscope.perf.arguments.Arguments` 动态生成，
+  因此 evalscope 升级新增参数时界面自动跟上；留空 = 使用 evalscope 默认值。
+  被批量网格接管的字段（`model` / `url` / `api_key` / `parallel` / `number` / `max_tokens` / `dataset*` /
+  `outputs_dir` / `tokenizer_path` / `stream` / `prefix_length` / `log_every_n_query` 等）不重复出现。
+- 顶部「命令导入」可直接粘贴现成命令：
+  ```
+  evalscope perf --model qwen3-8b --url http://127.0.0.1:8000/v1/chat/completions \
+    --dataset random --tokenizer-path /models/qwen3 --parallel 16 32 --number 80 160 \
+    --max-tokens 500 --max-prompt-length 32768 --temperature 0.6
+  ```
+  解析规则：`--model/--url/--api-key/--tokenizer-path/--dataset/--dataset-path/--max-tokens/
+  --min-prompt-length/--max-prompt-length/--parallel/--number/--stream` 映射到批量网格，
+  其余显式给出的 flag 落入 `evalscope_args`；`--parallel/--number` 多值按位置一一对应展开为多行并发组。
+  「由当前表单生成命令」可反向输出等价命令，便于复制到终端。
 
 ## 输出
 

@@ -20,10 +20,12 @@
 
 | 文件 | 职责 |
 |---|---|
-| `app.py` | Flask 路由层：`/start`、`/stop`、`/status`、`/state`、`/stream`(SSE)、`/results`、`/download/csv` |
-| `runner.py` | 核心业务：`RunConfig` 配置校验、`BenchmarkRunner` 单例管理压测生命周期、结果广播 |
+| `app.py` | Flask 路由层：`/start`、`/stop`、`/status`、`/state`、`/stream`(SSE)、`/results`、`/download/csv`、`/evalscope/schema`、`/evalscope/parse-command` |
+| `runner.py` | 核心业务：`RunConfig` 配置校验、`BenchmarkRunner` 单例管理压测生命周期、结果广播；`evalscope_args` 透传其余 `Arguments` 字段 |
+| `evalscope_schema.py` | 反射 `Arguments` 生成参数元信息（供前端动态渲染高级面板）；解析 `evalscope perf ...` 命令回填表单 |
 | `csv_writer.py` | CSV 输出：21 列表头，`write_run`/`write_avg`，注意 `avg_ttft`/`avg_tpot`/`avg_itl` 单位是 ms，CSV 统一转 s |
-| `templates/index.html` | 单页前端：左栏表单、右栏控制/进度/结果/日志 |
+| `templates/index.html` | 单页前端骨架（命令导入 / 连接 / 数据集 / 批量网格 / 执行参数 / 高级参数 + 右侧进度日志 + 结果表） |
+| `static/app.css` `static/core.js` `static/run.js` `static/advanced.js` | 样式、表单核心、运行态（日志/结果/SSE/进度）、高级参数面板与命令解析 |
 
 ## 开发约定
 

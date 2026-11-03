@@ -3,977 +3,295 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Eval Bench — Web Demo</title>
-<style>
-/* ========== reset & base ========== */
-*, *::before, *::after { box-sizing: border-box; }
-body {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans SC", sans-serif;
-    background: #f5f6fa; color: #333; margin: 0; padding: 20px;
-}
-h1 { font-size: 1.4rem; margin: 0 0 4px; }
-.subtitle { color: #666; font-size: .85rem; margin: 0 0 16px; }
-
-/* ========== layout ========== */
-.container { max-width: 1100px; margin: 0 auto; }
-.row { display: flex; gap: 16px; }
-.col-left { flex: 1; min-width: 0; }
-.col-right { width: 480px; flex-shrink: 0; display: flex; flex-direction: column; }
-
-/* ========== card ========== */
-.card {
-    background: #fff; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.08);
-    margin-bottom: 12px; overflow: hidden;
-}
-.card-header {
-    background: #f8f9fc; border-bottom: 1px solid #e9ecef;
-    padding: 8px 14px; font-size: .85rem; font-weight: 600; color: #444;
-}
-.card-body { padding: 10px 14px 14px; }
-
-/* ========== form ========== */
-.form-group {
-    display: flex; align-items: center; gap: 8px;
-    margin-bottom: 6px;
-}
-.form-group label {
-    width: 160px; flex-shrink: 0; font-size: .82rem; color: #555;
-}
-.form-group input, .form-group select {
-    flex: 1; padding: 5px 8px; border: 1px solid #d0d5dd; border-radius: 4px;
-    font-size: .82rem; outline: none; transition: border .15s;
-}
-.form-group input:focus { border-color: #4a7cf7; box-shadow: 0 0 0 2px rgba(74,124,247,.15); }
-.form-group input.error { border-color: #e74c3c; }
-
-.form-group-inline {
-    display: flex; align-items: center; gap: 8px; margin-bottom: 6px;
-}
-.form-group-inline label { font-size: .82rem; color: #555; white-space: nowrap; }
-.form-group-inline input {
-    width: 80px; padding: 5px 8px; border: 1px solid #d0d5dd; border-radius: 4px;
-    font-size: .82rem; outline: none;
-}
-.form-group-inline input:focus { border-color: #4a7cf7; box-shadow: 0 0 0 2px rgba(74,124,247,.15); }
-
-.dynamic-row {
-    display: flex; align-items: center; gap: 6px; margin-bottom: 4px;
-}
-.dynamic-row input {
-    width: 90px; padding: 4px 8px; border: 1px solid #d0d5dd; border-radius: 4px;
-    font-size: .82rem; outline: none;
-}
-.dynamic-row input:focus { border-color: #4a7cf7; }
-.dynamic-row .del-btn {
-    background: none; border: none; color: #999; cursor: pointer;
-    font-size: 1rem; line-height: 1; padding: 0 4px;
-}
-.dynamic-row .del-btn:hover { color: #e74c3c; }
-.add-btn {
-    background: none; border: 1px dashed #b0b8c4; border-radius: 4px;
-    color: #666; cursor: pointer; font-size: .82rem; padding: 3px 12px;
-    margin-top: 2px;
-}
-.add-btn:hover { border-color: #4a7cf7; color: #4a7cf7; }
-
-.manual-row {
-    display: flex; align-items: flex-start; gap: 6px; margin-bottom: 6px;
-}
-.manual-row .manual-q, .manual-row .manual-a {
-    padding: 4px 8px; border: 1px solid #d0d5dd; border-radius: 4px;
-    font-size: .82rem; outline: none; font-family: inherit;
-}
-.manual-row .manual-q { flex: 1.2; min-width: 0; }
-.manual-row .manual-a { flex: 1; min-width: 0; }
-.manual-row .manual-q:focus, .manual-row .manual-a:focus { border-color: #4a7cf7; box-shadow: 0 0 0 2px rgba(74,124,247,.15); }
-.manual-row .manual-q.error { border-color: #e74c3c; }
-.manual-row .del-btn { margin-top: 2px; }
-
-.checkbox-group {
-    display: flex; gap: 16px; padding: 4px 0;
-}
-.checkbox-group label {
-    display: flex; align-items: center; gap: 4px;
-    font-size: .82rem; cursor: pointer;
-}
-
-/* ========== control bar ========== */
-.control-bar {
-    display: flex; align-items: center; gap: 8px;
-    padding: 10px 14px; background: #f8f9fc; border-bottom: 1px solid #e9ecef;
-}
-.btn {
-    padding: 6px 18px; border: none; border-radius: 4px;
-    font-size: .82rem; font-weight: 500; cursor: pointer; transition: background .15s;
-}
-.btn:disabled { opacity: .5; cursor: not-allowed; }
-.btn-primary { background: #4a7cf7; color: #fff; }
-.btn-primary:hover:not(:disabled) { background: #3b6aea; }
-.btn-danger { background: #e74c3c; color: #fff; }
-.btn-danger:hover:not(:disabled) { background: #c0392b; }
-.btn-outline { background: #fff; border: 1px solid #d0d5dd; color: #555; }
-.btn-outline:hover:not(:disabled) { background: #f0f2f5; }
-.btn-sm { padding: 4px 12px; font-size: .78rem; }
-
-/* ========== progress ========== */
-.progress-section { padding: 8px 14px 12px; }
-.progress-bar-bg {
-    height: 8px; background: #e9ecef; border-radius: 4px; overflow: hidden; margin-bottom: 6px;
-}
-.progress-bar-fill {
-    height: 100%; width: 0%; background: linear-gradient(90deg, #4a7cf7, #6c5ce7);
-    border-radius: 4px; transition: width .5s ease;
-}
-.progress-info {
-    display: flex; justify-content: space-between;
-    font-size: .75rem; color: #777;
-}
-.progress-detail {
-    font-size: .75rem; color: #555; line-height: 1.5;
-}
-
-/* ========== log ========== */
-.log-box {
-    height: 300px; min-height: 120px; overflow-y: auto;
-    resize: vertical;
-    background: #1e1e2e; color: #cdd6f4; font-family: "Cascadia Code", "Fira Code", monospace;
-    font-size: .78rem; line-height: 1.55; padding: 10px 14px;
-    border-radius: 0 0 8px 8px;
-    white-space: pre-wrap; word-break: break-all;
-}
-.log-box .ts { color: #6c7086; }
-.log-box .info { color: #89b4fa; }
-.log-box .ok  { color: #a6e3a1; }
-.log-box .err { color: #f38ba8; }
-.log-box .hl  { color: #f9e2af; }
-
-/* ========== results table ========== */
-.results-body { max-height: 360px; overflow-y: auto; }
-.results-table-wrap { overflow-x: auto; }
-#results-table {
-    width: 100%; border-collapse: collapse;
-    font-size: .72rem; font-family: "Cascadia Code", "Fira Code", monospace;
-}
-#results-table th, #results-table td {
-    padding: 4px 6px; border: 1px solid #e9ecef; white-space: nowrap; text-align: right;
-}
-#results-table th {
-    background: #f8f9fc; color: #555; font-weight: 600;
-    position: sticky; top: 0; z-index: 1; text-align: center; line-height: 1.3;
-}
-#results-table td:nth-child(1) { text-align: center; font-weight: 600; }
-#results-table td:nth-child(2) { text-align: center; }
-#results-table tr:nth-child(even) { background: #fafbfc; }
-#results-table tr.row-avg { background: #eef3ff; font-weight: 600; }
-#results-table tr.row-avg td { color: #3b6aea; }
-/* API Key 行颜色区分 */
-#results-table tr.key-1 td:first-child { border-left: 3px solid #4a7cf7; }
-#results-table tr.key-2 td:first-child { border-left: 3px solid #2ecc71; }
-#results-table tr.key-3 td:first-child { border-left: 3px solid #e67e22; }
-#results-table tr.key-4 td:first-child { border-left: 3px solid #9b59b6; }
-#results-table tr.key-5 td:first-child { border-left: 3px solid #e74c3c; }
-#results-table tr.key-6 td:first-child { border-left: 3px solid #1abc9c; }
-#results-table tr.key-7 td:first-child { border-left: 3px solid #f39c12; }
-#results-table tr.key-8 td:first-child { border-left: 3px solid #34495e; }
-
-/* ========== responsive ========== */
-@media (max-width: 860px) {
-    .row { flex-direction: column; }
-    .col-right { width: auto; }
-    .form-group { flex-wrap: wrap; }
-    .form-group label { width: auto; min-width: 100px; }
-}
-</style>
+<title>EvalScope Perf Console</title>
+<link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
-<div class="container">
 
-<h1>🧪 Eval Bench — Web Demo</h1>
-<p class="subtitle">基于 evalscope Python SDK 的批量压测配置 & 运行（v2 / in-process）</p>
-
-<div class="row">
-
-<!-- ========== 左栏：表单 ========== -->
-<div class="col-left">
-
-<!-- 基础配置 -->
-<div class="card">
-<div class="card-header">🔧 基础配置</div>
-<div class="card-body">
-    <div class="form-group">
-        <label for="model_name">模型名称</label>
-        <input id="model_name" type="text" placeholder="deepseek-v4-flash">
+<header class="topbar">
+  <div class="topbar-inner">
+    <div class="brand">
+      <div class="brand-mark">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M13 2 4.5 13.5H11l-1 8.5 8.5-11.5H12l1-8.5Z" fill="currentColor"/>
+        </svg>
+      </div>
+      <div>
+        <div class="brand-title">EvalScope Perf Console</div>
+        <div class="brand-sub">evalscope 压测 · 批量网格 · 实时结果</div>
+      </div>
     </div>
-    <div class="form-group">
-        <label for="api_url">API URL</label>
-        <input id="api_url" type="url" placeholder="http://192.168.7.206:8099/v1/chat/completions">
-    </div>
-    <div class="form-group">
-        <label for="tokenizer_path">Tokenizer 路径（random 必填）</label>
-        <input id="tokenizer_path" type="text" placeholder="random 任务必填，如 /ainfs-nv-prod/.../tokenizer">
-    </div>
-    <div class="form-group">
-        <label>API Keys（多用户并发）</label>
-        <div style="flex:1;">
-            <div id="api-key-container"></div>
-            <button class="add-btn" id="add-api-key-btn">+ 添加 API Key</button>
+    <div class="topbar-spacer"></div>
+    <span class="state-pill" id="state-pill"><span class="dot"></span><span id="state-text">空闲</span></span>
+    <button class="btn btn-ghost btn-sm" id="btn-refresh" title="刷新状态与进度">↻ 刷新</button>
+    <button class="btn btn-primary" id="btn-start">▶ 启动压测</button>
+    <button class="btn btn-danger" id="btn-stop" disabled>■ 停止</button>
+  </div>
+</header>
+
+<main class="page">
+<div class="layout">
+
+  <!-- ================= 左：配置 ================= -->
+  <div class="col-main">
+
+    <!-- 命令导入 -->
+    <section class="card">
+      <div class="card-head">
+        <span class="idx">01</span>
+        <span class="card-title">命令导入</span>
+        <span class="card-desc">粘贴现成的 <code>evalscope perf</code> 命令，自动回填全部参数</span>
+        <span class="grow"></span>
+        <button class="btn btn-ghost btn-sm" id="btn-cmd-sample">填入示例</button>
+      </div>
+      <div class="card-body">
+        <div class="cmd-box">
+          <textarea id="cmd-input" spellcheck="false" rows="3"
+            placeholder="evalscope perf --model qwen3-8b --url http://127.0.0.1:8000/v1/chat/completions --dataset random --tokenizer-path /models/qwen3 --parallel 16 32 --number 80 160 --max-tokens 500 --max-prompt-length 32768 --api-key sk-xxx"></textarea>
         </div>
-    </div>
-</div>
-</div>
-
-<!-- 数据集配置 -->
-<div class="card">
-<div class="card-header">📁 数据集配置</div>
-<div class="card-body">
-    <div class="form-group">
-        <label for="openclaw_dataset_path">OpenClaw 数据集路径</label>
-        <input id="openclaw_dataset_path" type="text" placeholder="input50.jsonl">
-    </div>
-    <div class="form-group">
-        <label for="openclaw_dataset_name">数据集名称</label>
-        <input id="openclaw_dataset_name" type="text" placeholder="line_by_line">
-    </div>
-</div>
-</div>
-
-<!-- 手动数据集 -->
-<div class="card">
-<div class="card-header">✍️ 手动数据集（manual 任务使用）</div>
-<div class="card-body">
-    <div style="font-size:.78rem;color:#777;margin-bottom:6px;">
-        问题必填，答案非必填（仅记录，暂不参与评估）；不填答案即纯性能测试。
-    </div>
-    <div id="manual-dataset-container"></div>
-    <button class="add-btn" id="add-manual-btn">+ 添加问题</button>
-</div>
-</div>
-
-<!-- 执行参数 -->
-<div class="card">
-<div class="card-header">⚙️ 执行参数</div>
-<div class="card-body">
-    <div class="form-group-inline">
-        <label>测试重复次数</label>
-        <input id="test_repeats" type="number" min="1" value="3">
-    </div>
-    <div class="form-group-inline">
-        <label>LOG_EVERY_N_QUERY</label>
-        <input id="log_every_n_query" type="number" min="1" value="500">
-    </div>
-    <div class="form-group-inline">
-        <label>PREFIX_LENGTH</label>
-        <input id="prefix_length" type="number" min="0" value="0">
-    </div>
-    <div class="form-group-inline">
-        <label>测试间隔 (s)</label>
-        <input id="wait_between_tests" type="number" min="0" value="60">
-    </div>
-    <div class="form-group-inline">
-        <label>响应模式</label>
-        <select id="stream_mode" style="width:120px;padding:5px 8px;border:1px solid #d0d5dd;border-radius:4px;font-size:.82rem;">
-            <option value="true">流式 (stream)</option>
-            <option value="false">非流式 (non-stream)</option>
-        </select>
-    </div>
-</div>
-</div>
-
-<!-- 数组类参数 -->
-<div class="card">
-<div class="card-header">📋 任务与并发配置</div>
-<div class="card-body">
-
-    <!-- task_types -->
-    <div class="form-group-inline" style="margin-bottom:8px;">
-        <label>任务类型</label>
-        <div class="checkbox-group">
-            <label><input type="checkbox" class="task-type-cb" value="random" checked> random</label>
-            <label><input type="checkbox" class="task-type-cb" value="openclaw"> openclaw</label>
-            <label><input type="checkbox" class="task-type-cb" value="manual"> manual（手动输入）</label>
+        <div class="cmd-actions">
+          <button class="btn btn-primary btn-sm" id="btn-cmd-parse">解析并填充</button>
+          <button class="btn btn-ghost btn-sm" id="btn-cmd-build">由当前表单生成命令</button>
+          <button class="btn btn-ghost btn-sm" id="btn-cmd-clear">清空</button>
+          <span class="rows-tip">支持多行、行尾 <code>\</code> 续行；<code>--parallel/--number</code> 多值自动展开为多行网格</span>
         </div>
+        <div class="cmd-msg" id="cmd-msg"></div>
+      </div>
+    </section>
+
+    <!-- 连接 -->
+    <section class="card">
+      <div class="card-head">
+        <span class="idx">02</span>
+        <span class="card-title">连接与鉴权</span>
+        <span class="grow"></span>
+        <span class="card-desc" id="key-summary">0 个用户</span>
+      </div>
+      <div class="card-body">
+        <div class="field">
+          <label for="model_name">模型名称 <span class="req">*</span></label>
+          <input id="model_name" type="text" placeholder="deepseek-v4-flash" autocomplete="off">
+        </div>
+        <div class="field">
+          <label for="api_url">API URL <span class="req">*</span></label>
+          <input id="api_url" type="text" placeholder="http://127.0.0.1:8000/v1/chat/completions" spellcheck="false">
+        </div>
+        <div class="field">
+          <label for="tokenizer_path">Tokenizer 路径</label>
+          <input id="tokenizer_path" type="text" placeholder="random 任务必填（--tokenizer-path）" spellcheck="false">
+        </div>
+        <div class="field">
+          <label>API Keys</label>
+          <div>
+            <div class="rows" id="api-key-container"></div>
+            <div class="rows-foot">
+              <button class="add-btn" id="add-api-key-btn">+ 添加 API Key</button>
+              <span class="rows-tip">多个 Key 视为多个用户并行压测</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 数据集 -->
+    <section class="card">
+      <div class="card-head">
+        <span class="idx">03</span>
+        <span class="card-title">任务类型与数据集</span>
+      </div>
+      <div class="card-body">
+        <div class="field">
+          <label>任务类型 <span class="req">*</span></label>
+          <div class="check-row" id="task-type-row">
+            <label class="chk"><input type="checkbox" class="task-type-cb" value="random" checked> random 随机长度</label>
+            <label class="chk"><input type="checkbox" class="task-type-cb" value="openclaw"> dataset 数据集</label>
+            <label class="chk"><input type="checkbox" class="task-type-cb" value="manual"> manual 手动问题</label>
+          </div>
+        </div>
+        <div class="field">
+          <label for="openclaw_dataset_name">dataset 名称</label>
+          <input id="openclaw_dataset_name" type="text" placeholder="line_by_line / openqa / custom …" spellcheck="false">
+        </div>
+        <div class="field">
+          <label for="openclaw_dataset_path">dataset 路径</label>
+          <input id="openclaw_dataset_path" type="text" placeholder="input50.jsonl（line_by_line / custom 必填）" spellcheck="false">
+        </div>
+
+        <details class="sect stack-gap" id="manual-sect">
+          <summary>手动数据集 <span class="badge-count muted" id="manual-count">0</span></summary>
+          <div class="sect-body">
+            <div class="rows scroll" id="manual-dataset-container"></div>
+            <div class="rows-foot">
+              <button class="add-btn" id="add-manual-btn">+ 添加问题</button>
+              <span class="rows-tip">问题必填，答案选填（仅记录）</span>
+            </div>
+          </div>
+        </details>
+      </div>
+    </section>
+
+    <!-- 批量网格 -->
+    <section class="card">
+      <div class="card-head">
+        <span class="idx">04</span>
+        <span class="card-title">批量组合网格</span>
+        <span class="card-desc" id="grid-summary">—</span>
+      </div>
+      <div class="card-body">
+        <div class="inline-grid">
+          <div class="inline-field">
+            <label>输入 / 输出 token 组</label>
+            <div class="rows scroll" id="io-group-container"></div>
+            <div class="rows-foot"><button class="add-btn" id="add-io-btn">+ 添加组合</button></div>
+          </div>
+          <div class="inline-field">
+            <label>并发 / 请求数 组</label>
+            <div class="rows scroll" id="cr-group-container"></div>
+            <div class="rows-foot">
+              <button class="add-btn" id="add-cr-btn">+ 添加组合</button>
+              <button class="add-btn" id="btn-cr-fill" title="按并行度序列批量生成">批量生成</button>
+            </div>
+          </div>
+        </div>
+        <div class="rows-tip stack-gap">总测试数 = 任务类型 × IO 组 × 并发组 × 重复次数 × 用户数</div>
+      </div>
+    </section>
+
+    <!-- 执行参数 -->
+    <section class="card">
+      <div class="card-head">
+        <span class="idx">05</span>
+        <span class="card-title">执行参数</span>
+      </div>
+      <div class="card-body">
+        <div class="inline-grid">
+          <div class="inline-field">
+            <label for="test_repeats">重复次数</label>
+            <input id="test_repeats" type="number" min="1" value="3">
+          </div>
+          <div class="inline-field">
+            <label for="wait_between_tests">测试间隔 (s)</label>
+            <input id="wait_between_tests" type="number" min="0" value="60">
+          </div>
+          <div class="inline-field">
+            <label for="log_every_n_query">--log-every-n-query</label>
+            <input id="log_every_n_query" type="number" min="1" value="500">
+          </div>
+          <div class="inline-field">
+            <label for="prefix_length">--prefix-length</label>
+            <input id="prefix_length" type="number" min="0" value="0">
+          </div>
+          <div class="inline-field">
+            <label for="stream_mode">响应模式 --stream</label>
+            <select id="stream_mode">
+              <option value="true">流式 (stream)</option>
+              <option value="false">非流式 (no-stream)</option>
+            </select>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 高级参数 -->
+    <section class="card">
+      <div class="card-head">
+        <span class="idx">06</span>
+        <span class="card-title">evalscope 高级参数</span>
+        <span class="card-desc" id="schema-desc">加载中…</span>
+        <span class="grow"></span>
+        <button class="btn btn-ghost btn-sm" id="btn-adv-reset">重置</button>
+      </div>
+      <div class="card-body">
+        <div class="adv-toolbar">
+          <label class="switch"><input type="checkbox" id="adv-only-set"> 仅显示已修改</label>
+          <span class="grow"></span>
+          <span>已修改 <span class="badge-count" id="adv-set-count">0</span> 项</span>
+          <span class="rows-tip">留空 = 使用 evalscope 默认值</span>
+        </div>
+        <div id="adv-groups"></div>
+        <div class="managed-note" id="managed-note"></div>
+      </div>
+    </section>
+
+  </div>
+
+  <!-- ================= 右：进度 + 日志 ================= -->
+  <aside class="col-side">
+
+    <section class="card">
+      <div class="card-head">
+        <span class="idx">◎</span>
+        <span class="card-title">运行进度</span>
+        <span class="grow"></span>
+        <span class="card-desc" id="run-id"></span>
+      </div>
+      <div class="progress-wrap">
+        <div class="progress-track"><div class="progress-fill" id="progress-fill"></div></div>
+        <div class="progress-meta">
+          <span><strong id="progress-text">0 / 0</strong> <span id="progress-pct">(0%)</span></span>
+          <span>剩余 <strong id="progress-eta">--</strong></span>
+        </div>
+        <div class="progress-detail" id="progress-detail"></div>
+        <div class="stat-grid">
+          <div class="stat"><div class="v" id="stat-users">1</div><div class="k">用户数</div></div>
+          <div class="stat"><div class="v" id="stat-done">0</div><div class="k">已完成</div></div>
+          <div class="stat"><div class="v" id="stat-rows">0</div><div class="k">结果行</div></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <span class="idx">▤</span>
+        <span class="card-title">实时日志</span>
+        <span class="grow"></span>
+        <span class="card-desc" id="log-count">0 行</span>
+      </div>
+      <div class="log-toolbar">
+        <input type="text" id="log-filter" placeholder="过滤关键字">
+        <label><input type="checkbox" id="log-autoscroll" checked> 自动滚动</label>
+        <span class="grow"></span>
+        <button class="btn btn-ghost btn-sm" id="btn-log-clear">清空</button>
+      </div>
+      <div class="log-box" id="log-box"><div class="info">--- 等待启动 ---</div></div>
+    </section>
+
+  </aside>
+</div>
+
+<!-- ================= 结果表 ================= -->
+<section class="card stack-gap" id="results-card" style="display:none;">
+  <div class="card-head">
+    <span class="idx">▦</span>
+    <span class="card-title">运行结果</span>
+    <span class="card-desc" id="results-summary"></span>
+    <span class="grow"></span>
+    <button class="btn btn-ghost btn-sm" id="btn-copy-csv">复制表格</button>
+    <button class="btn btn-subtle btn-sm" id="btn-download-csv">⤓ 下载 CSV</button>
+  </div>
+  <div class="card-body flush">
+    <div class="results-scroll">
+      <table class="results">
+        <thead>
+          <tr>
+            <th>用户</th><th>任务</th><th>输入</th><th>输出</th><th>并发</th><th>请求</th>
+            <th>Latency<br>Avg</th><th>Latency<br>P90</th>
+            <th>TTFT<br>Avg</th><th>TTFT<br>P90</th><th>TPOT<br>Avg</th><th>ITL<br>Avg</th>
+            <th>实输入</th><th>实输出</th><th>输出吞吐</th><th>RPS</th><th>总吞吐</th><th>重复</th>
+          </tr>
+        </thead>
+        <tbody id="results-tbody"></tbody>
+      </table>
     </div>
+    <div class="empty-state" id="results-empty">暂无结果，启动压测后此处实时刷新</div>
+  </div>
+</section>
 
-    <!-- input_output_groups -->
-    <div style="margin-bottom:10px;">
-        <div style="font-size:.82rem;color:#555;margin-bottom:4px;">输入/输出长度组（input → output）</div>
-        <div id="io-group-container"></div>
-        <button class="add-btn" id="add-io-btn">+ 添加行</button>
-    </div>
+</main>
 
-    <!-- concurrency_request_groups -->
-    <div>
-        <div style="font-size:.82rem;color:#555;margin-bottom:4px;">并发/请求数（parallel → number）</div>
-        <div id="cr-group-container"></div>
-        <button class="add-btn" id="add-cr-btn">+ 添加行</button>
-    </div>
-
-</div>
-</div>
-
-</div><!-- /col-left -->
-
-<!-- ========== 右栏：控制 + 进度 + 日志 ========== -->
-<div class="col-right">
-
-<!-- 控制 -->
-<div class="card">
-<div class="control-bar">
-    <button class="btn btn-primary" id="btn-start">▶ 启动</button>
-    <button class="btn btn-danger" id="btn-stop" disabled>⏹ 停止</button>
-    <button class="btn btn-outline btn-sm" id="btn-refresh">↻ 状态</button>
-    <span id="state-label" style="font-size:.78rem;color:#888;">空闲</span>
-</div>
-
-<!-- 进度 -->
-<div class="progress-section">
-    <div class="progress-bar-bg">
-        <div class="progress-bar-fill" id="progress-fill" style="width:0%"></div>
-    </div>
-    <div class="progress-info">
-        <span id="progress-text">0/0 (0%)</span>
-        <span id="progress-eta">--</span>
-    </div>
-    <div class="progress-detail" id="progress-detail"></div>
-</div>
-</div>
-
-<!-- 结果 -->
-<div class="card" id="results-card" style="display:none;">
-<div class="card-header" style="display:flex;justify-content:space-between;align-items:center;">
-    <span>📊 运行结果</span>
-    <button class="btn btn-outline btn-sm" id="btn-download-csv">📥 下载 CSV</button>
-</div>
-<div class="card-body results-body" style="padding:0;">
-    <div class="results-table-wrap">
-        <table id="results-table">
-            <thead>
-                <tr>
-                    <th>#</th>
-                    <th>任务</th>
-                    <th>输入</th>
-                    <th>输出</th>
-                    <th>并发</th>
-                    <th>请求</th>
-                    <th>Latency<br>Avg(s)</th>
-                    <th>Latency<br>P90(s)</th>
-                    <th>TTFT<br>Avg(s)</th>
-                    <th>TTFT<br>P90(s)</th>
-                    <th>TPOT<br>Avg(s)</th>
-                    <th>ITL<br>Avg(s)</th>
-                    <th>实际输入</th>
-                    <th>实际输出</th>
-                    <th>输出吞吐<br>(tok/s)</th>
-                    <th>RPS</th>
-                    <th>总吞吐<br>(tok/s)</th>
-                    <th>重复</th>
-                </tr>
-            </thead>
-            <tbody id="results-tbody"></tbody>
-        </table>
-    </div>
-</div>
-</div>
-
-<!-- 日志 -->
-<div class="card">
-<div class="card-header" style="display:flex;justify-content:space-between;">
-    <span>📜 日志</span>
-    <span id="log-count" style="font-weight:400;color:#999;font-size:.78rem;">0 行</span>
-</div>
-<div class="log-box" id="log-box">
-    <div class="info">--- 等待启动 ---</div>
-</div>
-</div>
-
-</div><!-- /col-right -->
-
-</div><!-- /row -->
-</div><!-- /container -->
-
-<script>
-(function() {
-'use strict';
-
-// ========== DOM refs ==========
-const $ = id => document.getElementById(id);
-
-const DOM = {
-    modelName:       $('model_name'),
-    apiUrl:          $('api_url'),
-    tokenizerPath:   $('tokenizer_path'),
-    apiKeyContainer: $('api-key-container'),
-    addApiKeyBtn:    $('add-api-key-btn'),
-    openclawPath:    $('openclaw_dataset_path'),
-    openclawName:    $('openclaw_dataset_name'),
-    testRepeats:     $('test_repeats'),
-    logEveryN:       $('log_every_n_query'),
-    prefixLength:    $('prefix_length'),
-    waitBetween:     $('wait_between_tests'),
-    streamMode:      $('stream_mode'),
-    ioContainer:     $('io-group-container'),
-    crContainer:     $('cr-group-container'),
-    addIoBtn:        $('add-io-btn'),
-    addCrBtn:        $('add-cr-btn'),
-    manualContainer: $('manual-dataset-container'),
-    addManualBtn:    $('add-manual-btn'),
-    btnStart:        $('btn-start'),
-    btnStop:         $('btn-stop'),
-    btnRefresh:      $('btn-refresh'),
-    stateLabel:      $('state-label'),
-    progressFill:    $('progress-fill'),
-    progressText:    $('progress-text'),
-    progressEta:     $('progress-eta'),
-    progressDetail:  $('progress-detail'),
-    logBox:          $('log-box'),
-    logCount:        $('log-count'),
-    resultsCard:     $('results-card'),
-    resultsTbody:    $('results-tbody'),
-    btnDownloadCsv:  $('btn-download-csv'),
-};
-
-// ========== dynamic row helpers ==========
-function createApiKeyRow(value) {
-    const div = document.createElement('div');
-    div.className = 'dynamic-row';
-    div.innerHTML = `
-        <input class="api-key-input" type="password" value="${value || ''}" placeholder="sk-..." style="width:252px;">
-        <button class="toggle-vis-btn" title="显示/隐藏" style="background:none;border:none;cursor:pointer;color:#888;font-size:.9rem;padding:0 2px;">👁</button>
-        <button class="del-btn" title="删除">✕</button>
-    `;
-    div.querySelector('.del-btn').addEventListener('click', () => {
-        // 至少保留一行
-        if (DOM.apiKeyContainer.querySelectorAll('.dynamic-row').length > 1) {
-            div.remove();
-            saveToLS();
-        }
-    });
-    div.querySelector('.api-key-input').addEventListener('input', () => saveToLS());
-    div.querySelector('.toggle-vis-btn').addEventListener('click', function() {
-        const inp = div.querySelector('.api-key-input');
-        if (inp.type === 'password') {
-            inp.type = 'text';
-            this.textContent = '🔒';
-        } else {
-            inp.type = 'password';
-            this.textContent = '👁';
-        }
-    });
-    return div;
-}
-
-function createIORow(inputVal, outputVal) {
-    const div = document.createElement('div');
-    div.className = 'dynamic-row';
-    div.innerHTML = `
-        <input class="io-input" type="number" min="1" value="${inputVal}" placeholder="输入">
-        <span style="color:#999;font-size:.82rem;">→</span>
-        <input class="io-output" type="number" min="1" value="${outputVal}" placeholder="输出">
-        <button class="del-btn" title="删除">✕</button>
-    `;
-    div.querySelector('.del-btn').addEventListener('click', () => div.remove());
-    return div;
-}
-
-function createCRRow(parallelVal, numberVal) {
-    const div = document.createElement('div');
-    div.className = 'dynamic-row';
-    div.innerHTML = `
-        <input class="cr-parallel" type="number" min="1" value="${parallelVal}" placeholder="并发">
-        <span style="color:#999;font-size:.82rem;">→</span>
-        <input class="cr-number" type="number" min="1" value="${numberVal}" placeholder="请求">
-        <button class="del-btn" title="删除">✕</button>
-    `;
-    div.querySelector('.del-btn').addEventListener('click', () => div.remove());
-    return div;
-}
-
-function createManualRow(qVal, aVal) {
-    const div = document.createElement('div');
-    div.className = 'manual-row';
-    const q = document.createElement('textarea');
-    q.className = 'manual-q'; q.rows = 1; q.placeholder = '问题（必填）';
-    q.value = qVal || '';
-    const a = document.createElement('textarea');
-    a.className = 'manual-a'; a.rows = 1; a.placeholder = '答案（选填）';
-    a.value = aVal || '';
-    const del = document.createElement('button');
-    del.className = 'del-btn'; del.title = '删除'; del.textContent = '✕';
-    del.addEventListener('click', () => div.remove());
-    div.appendChild(q); div.appendChild(a); div.appendChild(del);
-    return div;
-}
-
-// 初始化默认行
-function initDynamicRows() {
-    // API Keys — 默认一行空输入
-    DOM.apiKeyContainer.appendChild(createApiKeyRow(''));
-
-    // IO groups — 用原脚本默认值
-    const ioDefaults = [{input: 32768, output: 500}];
-    ioDefaults.forEach(d => DOM.ioContainer.appendChild(createIORow(d.input, d.output)));
-
-    // CR groups — 用原脚本默认值
-    const crDefaults = [
-        {parallel: 16, number: 80},
-        {parallel: 32, number: 160},
-        {parallel: 48, number: 240},
-        {parallel: 64, number: 320},
-        {parallel: 80, number: 400},
-        {parallel: 96, number: 480},
-        {parallel: 128, number: 640},
-        {parallel: 144, number: 720},
-        {parallel: 192, number: 960},
-        {parallel: 256, number: 1280},
-    ];
-    crDefaults.forEach(d => DOM.crContainer.appendChild(createCRRow(d.parallel, d.number)));
-
-    // 手动数据集 — 默认一行空问题
-    DOM.manualContainer.appendChild(createManualRow('', ''));
-}
-
-DOM.addApiKeyBtn.addEventListener('click', () => {
-    DOM.apiKeyContainer.appendChild(createApiKeyRow(''));
-});
-DOM.addIoBtn.addEventListener('click', () => {
-    DOM.ioContainer.appendChild(createIORow('', ''));
-});
-DOM.addCrBtn.addEventListener('click', () => {
-    DOM.crContainer.appendChild(createCRRow('', ''));
-});
-DOM.addManualBtn.addEventListener('click', () => {
-    DOM.manualContainer.appendChild(createManualRow('', ''));
-});
-
-// ========== localStorage persistence ==========
-const LS_KEY = 'eval_bench_demo_config';
-
-function saveToLS() {
-    const data = {
-        modelName: DOM.modelName.value,
-        apiUrl: DOM.apiUrl.value,
-        tokenizerPath: DOM.tokenizerPath.value,
-        apiKeys: [],
-        openclawPath: DOM.openclawPath.value,
-        openclawName: DOM.openclawName.value,
-        testRepeats: DOM.testRepeats.value,
-        logEveryN: DOM.logEveryN.value,
-        prefixLength: DOM.prefixLength.value,
-        waitBetween: DOM.waitBetween.value,
-        streamMode: DOM.streamMode.value,
-        ioRows: [],
-        crRows: [],
-        taskTypes: [],
-        manualRows: [],
-    };
-    DOM.apiKeyContainer.querySelectorAll('.api-key-input').forEach(inp => {
-        data.apiKeys.push(inp.value);
-    });
-    DOM.ioContainer.querySelectorAll('.dynamic-row').forEach(row => {
-        const inp = row.querySelector('.io-input');
-        const out = row.querySelector('.io-output');
-        if (inp && out) data.ioRows.push([inp.value, out.value]);
-    });
-    DOM.crContainer.querySelectorAll('.dynamic-row').forEach(row => {
-        const p = row.querySelector('.cr-parallel');
-        const n = row.querySelector('.cr-number');
-        if (p && n) data.crRows.push([p.value, n.value]);
-    });
-    DOM.manualContainer.querySelectorAll('.manual-row').forEach(row => {
-        const q = row.querySelector('.manual-q');
-        const a = row.querySelector('.manual-a');
-        if (q && a) data.manualRows.push([q.value, a.value]);
-    });
-    document.querySelectorAll('.task-type-cb').forEach(cb => {
-        if (cb.checked) data.taskTypes.push(cb.value);
-    });
-    try { localStorage.setItem(LS_KEY, JSON.stringify(data)); } catch (_) {}
-}
-
-function loadFromLS() {
-    let data;
-    try { data = JSON.parse(localStorage.getItem(LS_KEY)); } catch (_) { return; }
-    if (!data) return;
-    if (data.modelName) DOM.modelName.value = data.modelName;
-    if (data.apiUrl) DOM.apiUrl.value = data.apiUrl;
-    if (data.tokenizerPath) DOM.tokenizerPath.value = data.tokenizerPath;
-
-    // API Keys：兼容旧格式 apiKey (string) 和新格式 apiKeys (array)
-    if (Array.isArray(data.apiKeys) && data.apiKeys.length) {
-        DOM.apiKeyContainer.innerHTML = '';
-        data.apiKeys.forEach(v => DOM.apiKeyContainer.appendChild(createApiKeyRow(v)));
-    } else if (data.apiKey) {
-        DOM.apiKeyContainer.innerHTML = '';
-        DOM.apiKeyContainer.appendChild(createApiKeyRow(data.apiKey));
-    }
-
-    if (data.openclawPath) DOM.openclawPath.value = data.openclawPath;
-    if (data.openclawName) DOM.openclawName.value = data.openclawName;
-    if (data.testRepeats) DOM.testRepeats.value = data.testRepeats;
-    if (data.logEveryN) DOM.logEveryN.value = data.logEveryN;
-    if (data.prefixLength) DOM.prefixLength.value = data.prefixLength;
-    if (data.waitBetween) DOM.waitBetween.value = data.waitBetween;
-    if (data.streamMode) DOM.streamMode.value = data.streamMode;
-
-    if (Array.isArray(data.ioRows) && data.ioRows.length) {
-        DOM.ioContainer.innerHTML = '';
-        data.ioRows.forEach(([inp, out]) => DOM.ioContainer.appendChild(createIORow(inp, out)));
-    }
-    if (Array.isArray(data.crRows) && data.crRows.length) {
-        DOM.crContainer.innerHTML = '';
-        data.crRows.forEach(([p, n]) => DOM.crContainer.appendChild(createCRRow(p, n)));
-    }
-    if (Array.isArray(data.manualRows) && data.manualRows.length) {
-        DOM.manualContainer.innerHTML = '';
-        data.manualRows.forEach(([q, a]) => DOM.manualContainer.appendChild(createManualRow(q, a)));
-    }
-    if (Array.isArray(data.taskTypes) && data.taskTypes.length) {
-        document.querySelectorAll('.task-type-cb').forEach(cb => {
-            cb.checked = data.taskTypes.includes(cb.value);
-        });
-    }
-}
-
-// ========== collect form data ==========
-function collectConfig() {
-    const tt = [];
-    document.querySelectorAll('.task-type-cb:checked').forEach(cb => tt.push(cb.value));
-    const io = [];
-    DOM.ioContainer.querySelectorAll('.dynamic-row').forEach(row => {
-        const inp = parseInt(row.querySelector('.io-input').value, 10);
-        const out = parseInt(row.querySelector('.io-output').value, 10);
-        if (!isNaN(inp) && !isNaN(out)) io.push({input: inp, output: out});
-    });
-    const cr = [];
-    DOM.crContainer.querySelectorAll('.dynamic-row').forEach(row => {
-        const p = parseInt(row.querySelector('.cr-parallel').value, 10);
-        const n = parseInt(row.querySelector('.cr-number').value, 10);
-        if (!isNaN(p) && !isNaN(n)) cr.push({parallel: p, number: n});
-    });
-    // 收集所有 API Key
-    const apiKeys = [];
-    DOM.apiKeyContainer.querySelectorAll('.api-key-input').forEach(inp => {
-        const v = inp.value.trim();
-        if (v) apiKeys.push(v);
-    });
-    // 收集手动数据集（question 必填才纳入）
-    const manual = [];
-    DOM.manualContainer.querySelectorAll('.manual-row').forEach(row => {
-        const q = (row.querySelector('.manual-q').value || '').trim();
-        const a = (row.querySelector('.manual-a').value || '').trim();
-        if (q) manual.push({question: q, answer: a});
-    });
-
-    return {
-        model_name: DOM.modelName.value.trim(),
-        api_url: DOM.apiUrl.value.trim(),
-        tokenizer_path: DOM.tokenizerPath.value.trim(),
-        openai_api_keys: apiKeys,
-        openclaw_dataset_path: DOM.openclawPath.value.trim(),
-        openclaw_dataset_name: DOM.openclawName.value.trim(),
-        test_repeats: parseInt(DOM.testRepeats.value, 10) || 3,
-        log_every_n_query: parseInt(DOM.logEveryN.value, 10) || 500,
-        prefix_length: parseInt(DOM.prefixLength.value, 10) || 0,
-        wait_between_tests: parseInt(DOM.waitBetween.value, 10) || 60,
-        stream: DOM.streamMode.value === 'true',
-        task_types: tt,
-        input_output_groups: io,
-        concurrency_request_groups: cr,
-        manual_dataset: manual,
-    };
-}
-
-// ========== results table ==========
-const RESULT_COLS = [
-    'api_key_index', 'task_type', 'Prompt_length', 'Max_tokens',
-    'Number_of_concurrency', 'Total_requests', 'Avg_Latency(s)', 'Latency_P90(s)',
-    'TTFT_Avg(s)', 'TTFT_P90(s)', 'TPOT_Avg(s)', 'Avg_Inter_Token_Latency(s)',
-    'Avg_Input_Tokens', 'Avg_Output_Tokens', 'Output_through(tok/s)', 'RPS(req/s)',
-    'Total_token_through(tok/s)', 'repeat_num'
-];
-
-function addResultRow(row) {
-    DOM.resultsCard.style.display = '';
-    const tr = document.createElement('tr');
-    if (row.repeat_num === 'AVG') tr.className = 'row-avg';
-    // 按 API Key 区分行颜色
-    const keyIdx = parseInt(row.api_key_index) || 1;
-    const keyClass = 'key-' + ((keyIdx - 1) % 8 + 1);
-    if (tr.className) tr.className += ' ' + keyClass;
-    else tr.className = keyClass;
-    for (const col of RESULT_COLS) {
-        const td = document.createElement('td');
-        let v = row[col];
-        if (v === undefined || v === null) v = '';
-        // API Key 序号显示为"用户N"
-        if (col === 'api_key_index') {
-            v = '用户' + v;
-        }
-        // 请求列：Total / Succeed
-        if (col === 'Total_requests' && row['Succeed_requests'] !== undefined) {
-            v = v + ' / ' + row['Succeed_requests'];
-        }
-        td.textContent = v;
-        tr.appendChild(td);
-    }
-    DOM.resultsTbody.appendChild(tr);
-    // 自动滚动到底部
-    const wrap = DOM.resultsTbody.closest('.results-body');
-    if (wrap) wrap.scrollTop = wrap.scrollHeight;
-}
-
-function loadExistingResults() {
-    fetch('/results').then(r => r.json()).then(data => {
-        if (data.results && data.results.length) {
-            DOM.resultsTbody.innerHTML = '';
-            data.results.forEach(row => addResultRow(row));
-        }
-    }).catch(() => {});
-}
-
-function downloadCsv() {
-    fetch('/download/csv').then(r => {
-        if (!r.ok) throw new Error('暂无结果文件');
-        return r.blob();
-    }).then(blob => {
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = 'results.csv';
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-    }).catch(err => alert('下载失败: ' + err.message));
-}
-
-DOM.btnDownloadCsv.addEventListener('click', downloadCsv);
-
-// ========== SSE log ==========
-let eventSource = null;
-let logLineCount = 0;
-
-function connectSSE() {
-    if (eventSource) return;
-    eventSource = new EventSource('/stream');
-    eventSource.onmessage = e => {
-        if (!e.data) return;
-        // 结构化结果行：前缀 __RESULT__: 后跟 JSON
-        if (e.data.startsWith('__RESULT__:')) {
-            try {
-                const row = JSON.parse(e.data.slice('__RESULT__:'.length));
-                addResultRow(row);
-            } catch (_) {}
-            return;
-        }
-        // 处理 \r 行（进度条行）
-        const lines = e.data.split('\r').filter(Boolean);
-        const last = lines.pop() || '';
-        appendLog(last);
-    };
-    eventSource.onerror = () => {
-        // 不自动重连 —— 避免后台任务结束后反复连
-    };
-}
-
-function disconnectSSE() {
-    if (eventSource) {
-        eventSource.close();
-        eventSource = null;
-    }
-}
-
-function appendLog(text) {
-    const cl = cssClass(text);
-    const div = document.createElement('div');
-    div.className = cl;
-    div.textContent = text || ' ';
-    DOM.logBox.appendChild(div);
-    logLineCount++;
-    DOM.logCount.textContent = logLineCount + ' 行';
-    // 自动滚动到底
-    DOM.logBox.scrollTop = DOM.logBox.scrollHeight;
-}
-
-function cssClass(text) {
-    if (!text) return '';
-    const t = text.trim();
-    if (/^\s*$/.test(t)) return '';
-    if (t.startsWith('=== ')) return 'hl';
-    if (t.startsWith('[process') || t.startsWith('[reader') || t.startsWith('[stop')) return 'info';
-    if (t.startsWith('✓') || t.startsWith('=') || /^创建/.test(t) || /^使用/.test(t)) return 'ok';
-    if (t.startsWith('错误') || t.startsWith('✗') || t.startsWith('[error')) return 'err';
-    return '';
-}
-
-function clearLog() {
-    DOM.logBox.innerHTML = '';
-    logLineCount = 0;
-    DOM.logCount.textContent = '0 行';
-}
-
-// ========== progress polling ==========
-let progressTimer = null;
-
-function startProgressPoll() {
-    stopProgressPoll();
-    pollProgress();
-    progressTimer = setInterval(pollProgress, 2000);
-}
-
-function stopProgressPoll() {
-    if (progressTimer) { clearInterval(progressTimer); progressTimer = null; }
-}
-
-async function pollProgress() {
-    try {
-        const r = await fetch('/status');
-        const data = await r.json();
-        const f = data.fields || {};
-        const pct = f._percent || '0';
-        const cur = f._current || '0';
-        const total = f._total || '0';
-        DOM.progressFill.style.width = pct + '%';
-        DOM.progressText.textContent = `${cur}/${total} (${pct}%)`;
-        DOM.progressEta.textContent = f['预计剩余'] || '--';
-        // detail 行
-        const parts = [];
-        if (f['用户数'] && f['用户数'] > 1) parts.push(`${f['用户数']}用户并发`);
-        if (f['任务']) parts.push(f['任务']);
-        if (f['IO配置']) parts.push(f['IO配置']);
-        if (f['并发']) parts.push(f['并发']);
-        if (f['重复']) parts.push(f['重复']);
-        DOM.progressDetail.textContent = parts.join(' · ') || '';
-    } catch (_) {}
-}
-
-// ========== state polling ==========
-async function pollState() {
-    try {
-        const r = await fetch('/state');
-        const data = await r.json();
-        if (data.running) {
-            DOM.stateLabel.textContent = '🟢 运行中';
-            DOM.btnStart.disabled = true;
-            DOM.btnStop.disabled = false;
-        } else {
-            DOM.stateLabel.textContent = '空闲';
-            DOM.btnStart.disabled = false;
-            DOM.btnStop.disabled = true;
-        }
-    } catch (_) {}
-}
-
-// ========== button handlers ==========
-DOM.btnStart.addEventListener('click', async () => {
-    saveToLS();
-    const cfg = collectConfig();
-
-    // 简单前端验证
-    if (!cfg.openai_api_keys.length) { alert('请至少填写一个 API Key'); return; }
-    if (!cfg.task_types.length) { alert('请至少选一项任务类型'); return; }
-    DOM.tokenizerPath.classList.remove('error');
-    if (cfg.task_types.includes('random') && !cfg.tokenizer_path) {
-        DOM.tokenizerPath.classList.add('error');
-        DOM.tokenizerPath.focus();
-        alert('选择 random 任务时必须填写 Tokenizer 路径');
-        return;
-    }
-    if (!cfg.input_output_groups.length) { alert('输入输出长度组至少需要一行'); return; }
-    if (!cfg.concurrency_request_groups.length) { alert('并发请求组至少需要一行'); return; }
-    if (cfg.task_types.includes('manual') && !cfg.manual_dataset.length) {
-        alert('选择了 manual 任务，请至少填写一个问题');
-        const firstQ = DOM.manualContainer.querySelector('.manual-q');
-        if (firstQ) { firstQ.classList.add('error'); firstQ.focus(); }
-        return;
-    }
-
-    // 禁用按钮
-    DOM.btnStart.disabled = true;
-    DOM.btnStop.disabled = true;
-    clearLog();
-    DOM.resultsTbody.innerHTML = '';
-    DOM.resultsCard.style.display = 'none';
-    appendLog('=== 正在提交配置... ===');
-
-    try {
-        const r = await fetch('/start', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify(cfg),
-        });
-        const data = await r.json();
-        if (!data.ok) {
-            appendLog(`[error] 启动失败: ${data.error}`);
-            DOM.btnStart.disabled = false;
-            return;
-        }
-        appendLog(`[info] 脚本已提交: ${data.script_path}`);
-        appendLog('=== 等待日志... ===');
-
-        // 连接 SSE
-        disconnectSSE();
-        connectSSE();
-        startProgressPoll();
-        pollState();  // 立即更新状态
-    } catch (err) {
-        appendLog(`[error] 网络错误: ${err.message}`);
-        DOM.btnStart.disabled = false;
-    } finally {
-        // 轮询状态，直到 running=true 或超时
-        let waited = 0;
-        const id = setInterval(async () => {
-            waited++;
-            await pollState();
-            if (DOM.btnStop.disabled === false) {  // running 了
-                clearInterval(id);
-            } else if (waited > 15) {
-                clearInterval(id);
-                DOM.btnStart.disabled = false;
-            }
-        }, 500);
-    }
-});
-
-DOM.btnStop.addEventListener('click', async () => {
-    DOM.btnStop.disabled = true;
-    appendLog('[stop requested]');
-    try {
-        await fetch('/stop', {method: 'POST'});
-    } catch (_) {}
-    setTimeout(async () => {
-        await pollState();
-        stopProgressPoll();
-    }, 1000);
-});
-
-DOM.btnRefresh.addEventListener('click', async () => {
-    await pollState();
-    await pollProgress();
-});
-
-// ========== debounced auto-save ==========
-function setupAutoSave() {
-    const inputs = document.querySelectorAll('input');
-    const onInput = () => saveToLS();
-    inputs.forEach(inp => inp.addEventListener('input', onInput));
-    // 监听动态行增加
-    const observer = new MutationObserver(() => saveToLS());
-    observer.observe(DOM.apiKeyContainer, {childList: true});
-    observer.observe(DOM.ioContainer, {childList: true});
-    observer.observe(DOM.crContainer, {childList: true});
-    observer.observe(DOM.manualContainer, {childList: true});
-    // checkbox
-    document.querySelectorAll('.task-type-cb').forEach(cb => cb.addEventListener('change', onInput));
-}
-
-// ========== init ==========
-initDynamicRows();
-loadFromLS();
-setupAutoSave();
-pollState();
-loadExistingResults();
-})();
-</script>
+<div class="toast-wrap" id="toast-wrap"></div>
+<script src="/static/core.js"></script>
+<script src="/static/run.js"></script>
+<script src="/static/advanced.js"></script>
 </body>
 </html>

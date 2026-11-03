@@ -30,6 +30,25 @@ class StopRequested(Exception):
     pass
 
 
+def _clean_evalscope_args(raw) -> dict:
+    """清洗高级透传参数：仅保留 Arguments 已知字段，去掉批量表单接管的字段。"""
+    from evalscope_schema import MANAGED_FIELDS
+
+    if isinstance(raw, str):
+        raw = json.loads(raw) if raw.strip() else {}
+    if not isinstance(raw, dict):
+        return {}
+    valid = set(Arguments.model_fields.keys())
+    out: dict = {}
+    for k, v in raw.items():
+        if k not in valid or k in MANAGED_FIELDS:
+            continue
+        if v is None or v == "" or v == [] or v == {}:
+            continue
+        out[str(k)] = v
+    return out
+
+
 # ---------- 配置 dataclass（轻量校验，区别于 Arguments 的完整字段）----------
 @dataclass(frozen=True)
 class IOGroup:
@@ -60,6 +79,9 @@ class RunConfig:
     concurrency_request_groups: list[CRGroup]
     stream: bool = True
     manual_dataset: list[dict] = field(default_factory=list)  # [{question, answer}]，answer 可空
+    # evalscope.perf.Arguments 的高级透传参数（键名即 Arguments 字段名），
+    # 由前端「高级参数」面板或 `evalscope perf` 命令解析得到。
+    evalscope_args: dict = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, d: dict) -> "RunConfig":
@@ -88,6 +110,7 @@ class RunConfig:
                                         for g in (d.get("concurrency_request_groups") or [])],
             stream=bool(d.get("stream", True)),
             manual_dataset=list(d.get("manual_dataset") or []),
+            evalscope_args=_clean_evalscope_args(d.get("evalscope_args")),
         )
 
     def to_safe_dict(self) -> dict:
@@ -96,6 +119,12 @@ class RunConfig:
         d["openai_api_keys"] = [
             (f"sk-***{k[-4:]}" if len(k) > 4 else "***") for k in d.get("openai_api_keys", [])
         ]
+        # 高级参数里的第三方 key 同样脱敏
+        adv = d.get("evalscope_args")
+        if isinstance(adv, dict):
+            for k in ("wandb_api_key", "swanlab_api_key"):
+                if adv.get(k):
+                    adv[k] = "***"
         # 移除旧字段（如果 asdict 包含了的话）
         d.pop("openai_api_key", None)
         return d
@@ -112,8 +141,12 @@ class RunConfig:
                 return f"未知 task_type: {t}"
             if t == "random" and not self.tokenizer_path:
                 return "选择了 random 任务但未填写 tokenizer_path（evalscope random dataset 需要 --tokenizer-path）"
-            if t == "openclaw" and not self.openclaw_dataset_path:
-                return "选择了 openclaw 任务但未填写 openclaw_dataset_path"
+            if t == "openclaw" and not self.openclaw_dataset_name:
+                return "选择了 openclaw 任务但未填写 dataset 名称"
+            if t == "openclaw" and self.openclaw_dataset_name in (
+                "line_by_line", "custom", "custom_multi_turn"
+            ) and not self.openclaw_dataset_path:
+                return f"dataset={self.openclaw_dataset_name} 需要填写数据集路径"
             if t == "manual":
                 qs = [str(m.get("question", "")).strip()
                       for m in self.manual_dataset if str(m.get("question", "")).strip()]
@@ -392,24 +425,36 @@ class BenchmarkRunner:
 
     def _build_arguments(self, cfg: RunConfig, task_type: str, io: IOGroup, cr: CRGroup,
                          api_key: str = "") -> Arguments:
+        # 1) 工具内置默认值
+        extra = {"ignore_eos": True}
+        extra.update(cfg.evalscope_args.get("extra_args") or {})
         common = dict(
+            api="openai",
+            read_timeout=600,
+            connect_timeout=30,
+            extra_args=extra,
+            enable_progress_tracker=True,
+            debug=False,
+            log_every_n_query=cfg.log_every_n_query,
+            prefix_length=cfg.prefix_length,
+            tokenizer_path=cfg.tokenizer_path or None,
+            outputs_dir=str(self._run_dir / "outputs"),
+            stream=cfg.stream,
+        )
+        # 2) 高级面板 / 命令解析传入的 evalscope 原生参数（覆盖内置默认值）
+        common.update(cfg.evalscope_args)
+        # extra_args 做并集：保留 ignore_eos，同时允许用户追加/覆盖
+        merged_extra = dict(extra)
+        merged_extra.update(cfg.evalscope_args.get("extra_args") or {})
+        common["extra_args"] = merged_extra
+        # 3) 批量网格强制接管（每个 sub-test 变化的维度）
+        common.update(
             model=cfg.model_name,
             url=cfg.api_url,
-            api="openai",
             api_key=api_key or None,
             parallel=cr.parallel,
             number=cr.number,
             max_tokens=io.output,
-            log_every_n_query=cfg.log_every_n_query,
-            prefix_length=cfg.prefix_length,
-            tokenizer_path=cfg.tokenizer_path or None,
-            read_timeout=600,
-            connect_timeout=30,
-            extra_args={"ignore_eos": True},
-            enable_progress_tracker=True,
-            outputs_dir=str(self._run_dir / "outputs"),
-            debug=False,
-            stream=cfg.stream,
         )
         if task_type == "random":
             return Arguments(
@@ -425,12 +470,11 @@ class BenchmarkRunner:
                 dataset="line_by_line",
                 dataset_path=str(self._manual_dataset_path),
             )
-        # openclaw
-        return Arguments(
-            **common,
-            dataset=cfg.openclaw_dataset_name,
-            dataset_path=cfg.openclaw_dataset_path,
-        )
+        # openclaw / 自定义 dataset
+        common["dataset"] = cfg.openclaw_dataset_name
+        if cfg.openclaw_dataset_path:
+            common["dataset_path"] = cfg.openclaw_dataset_path
+        return Arguments(**common)
 
     def _worker(self, cfg: RunConfig) -> None:
         writer = CsvWriter(self._csv_path, cfg.model_name)
@@ -438,6 +482,12 @@ class BenchmarkRunner:
         num_keys = len(cfg.openai_api_keys)
         self._broadcast(f"=== 开始批量测试 @ {self._started_at} 共 {total} 个测试 ({num_keys} 个用户并发) ===")
         self._broadcast(f"=== 结果文件: {self._csv_path} ===")
+        if cfg.evalscope_args:
+            self._broadcast(
+                "=== 附加 evalscope 参数: "
+                + json.dumps(cfg.evalscope_args, ensure_ascii=False)
+                + " ==="
+            )
 
         try:
             if num_keys <= 1:
