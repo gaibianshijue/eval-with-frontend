@@ -356,9 +356,9 @@ function buildCommand() {
     if (cfg.openai_api_keys.length) add('--api-key', cfg.openai_api_keys.join(','));
 
     const tt = cfg.task_types || [];
-    if (tt.includes('openclaw')) {
-        add('--dataset', cfg.openclaw_dataset_name);
-        add('--dataset-path', cfg.openclaw_dataset_path);
+    if (tt.includes('dataset')) {
+        add('--dataset', cfg.dataset_name);
+        add('--dataset-path', cfg.dataset_path);
         const inputs = cfg.input_output_groups.map((g) => g.input).filter((v) => v > 0);
         if (inputs.length) {
             add('--min-prompt-length', Math.min(...inputs));

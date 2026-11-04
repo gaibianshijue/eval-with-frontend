@@ -301,9 +301,9 @@ def _split_task_types(dataset: Optional[str]) -> tuple[list[str], list[str]]:
     if ds in ("random", "random_multi_turn"):
         return ["random"], warnings
     if ds == "line_by_line":
-        warnings.append("dataset=line_by_line 无法区分 openclaw 与 manual，默认按 openclaw 处理")
-        return ["openclaw"], warnings
-    return ["openclaw"], warnings
+        warnings.append("dataset=line_by_line 无法区分「自定义数据集」与 manual，默认按自定义数据集处理")
+        return ["dataset"], warnings
+    return ["dataset"], warnings
 
 
 def parse_perf_command(command: str) -> dict:
@@ -422,8 +422,8 @@ def parse_perf_command(command: str) -> dict:
         "api_url": url,
         "tokenizer_path": tokenizer_path,
         "openai_api_keys": api_keys,
-        "openclaw_dataset_path": dataset_path or "",
-        "openclaw_dataset_name": dataset,
+        "dataset_path": dataset_path or "",
+        "dataset_name": dataset,
         "stream": bool(normalized.get("stream", True)),
         "task_types": task_types,
         "api": api,

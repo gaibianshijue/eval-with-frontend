@@ -6,6 +6,10 @@ const C = window.Core;
 const DOM = C.DOM;
 const $ = (id) => document.getElementById(id);
 
+/* 后端 task_type 保持英文（与 evalscope / CSV 对齐），只在界面翻成中文 */
+const TASK_LABELS = { random: '随机长度', dataset: '自定义数据集', manual: '手动问题' };
+const taskLabel = (t) => TASK_LABELS[t] || t || '';
+
 const UI = {
     btnStart: $('btn-start'), btnStop: $('btn-stop'), btnRefresh: $('btn-refresh'),
     statePill: $('state-pill'), stateText: $('state-text'),
@@ -139,7 +143,8 @@ function addResultRow(row) {
         if (v === undefined || v === null) v = '';
         if (col === 'api_key_index') { v = '#' + keyIdx; td.classList.add('key-cell'); }
         else if (col === 'Total_requests') v = v + ' / ' + (row.Succeed_requests ?? '');
-        else if (col !== 'task_type' && col !== 'repeat_num') v = fmt(v);
+        else if (col === 'task_type') v = taskLabel(v);
+        else if (col !== 'repeat_num') v = fmt(v);
         td.textContent = v;
         tr.appendChild(td);
     });
@@ -264,7 +269,7 @@ async function pollProgress() {
         UI.statUsers.textContent = f['用户数'] || 1;
         UI.runId.textContent = data.started_at ? '启动于 ' + data.started_at.replace('T', ' ') : '';
         const chips = [];
-        if (f['任务']) chips.push('任务 ' + f['任务']);
+        if (f['任务']) chips.push('任务 ' + taskLabel(f['任务']));
         if (f['IO配置']) chips.push(f['IO配置']);
         if (f['并发']) chips.push(f['并发']);
         if (f['重复']) chips.push('重复 ' + f['重复']);
@@ -663,8 +668,8 @@ function bind() {
         }
     });
 
-    ['#model_name', '#api_url', '#tokenizer_path', '#openclaw_dataset_name',
-     '#openclaw_dataset_path', '#test_repeats', '#wait_between_tests',
+    ['#model_name', '#api_url', '#tokenizer_path', '#dataset_name',
+     '#dataset_path', '#test_repeats', '#wait_between_tests',
      '#log_every_n_query', '#prefix_length', '#stream_mode'].forEach((sel) => {
         const el = document.querySelector(sel);
         if (!el) return;

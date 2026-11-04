@@ -77,6 +77,30 @@ tqdm 完全一致：warmup 不计、多轮只在 `is_last_turn` 计一次，所�
 - 上限 40 个头、单值 512 字符，避免异常 header 撑爆 db
 - 补列之前产生的历史记录不会有该字段（老库读取时返回 `{}`，不会报错）
 
+### 流式结束判定（为什么最后 1~2 个请求会「卡住」）
+
+**现象**：请求级进度停在 `63/64` 不动，等很久也不结束；点「停止」立刻恢复正常。
+
+**原因**：Anthropic SSE 以 `message_stop` 事件终止，但代理型网关经常在它之后继续
+keep-alive 而不立即关闭连接。插件最初只靠 `response.content.iter_any()` 读到 EOF 才结束，
+于是 token 早就发完了，却还要空等到 `read_timeout`（默认 600s）才返回；如果网关期间
+持续发 SSE 心跳注释，`sock_read` 永不触发，会一直卡到 `total_timeout`。
+
+并发压测里是否命中取决于网关连接复用，所以通常只是**最后 1~2 个**请求撞上。
+
+**修复**：流式分支识别到 `message_stop` 立刻跳出循环，并以该事件的到达时刻作为完成时间
+（不把空等时间算进 latency）。
+
+**注意**：
+
+- OpenAI 协议走 evalscope 原生插件，同样以「`[DONE]` 后连接关闭」为结束信号；
+  若该协议也出现同款卡顿，需要按同样思路包一层
+- 网关既不发 `message_stop` 也不关连接时仍会落到 `read_timeout`，可用
+  `evalscope_args` 把 `read_timeout` 调小来快速失败
+
+实测（网关在 `message_stop` 后 hold 15s）：3 请求串行，修复前累计 45s+，修复后 1.0s，
+`Avg_Latency` 不含空等时间。
+
 ## 配置项 → SDK Arguments 映射
 
 | 前端字段 | `evalscope.perf.Arguments` |
@@ -85,8 +109,8 @@ tqdm 完全一致：warmup 不计、多轮只在 `is_last_turn` 计一次，所�
 | api_url | `url` |
 | tokenizer_path | `tokenizer_path`（选择 `random` 任务时必填，等价于 evalscope `--tokenizer-path`） |
 | openai_api_keys[] | `api_key`（每个 key 视为一个并行用户；仅传给 SDK，不落盘） |
-| openclaw_dataset_path | `dataset_path` |
-| openclaw_dataset_name | `dataset`（默认 `line_by_line`） |
+| dataset_path | `dataset_path`（自定义数据集任务） |
+| dataset_name | `dataset`（默认 `line_by_line`） |
 | input_output_groups[].input | `min_prompt_length` / `max_prompt_length`（random 任务） |
 | input_output_groups[].output | `max_tokens` |
 | concurrency_request_groups[].parallel | `parallel` |
@@ -94,7 +118,7 @@ tqdm 完全一致：warmup 不计、多轮只在 `is_last_turn` 计一次，所�
 | log_every_n_query | `log_every_n_query` |
 | prefix_length | `prefix_length` |
 | wait_between_tests | 各 sub-test 之间 sleep（runner 自管） |
-| task_types | random / openclaw / manual（runner 内分支处理；`random` 需要同时提供 `tokenizer_path`） |
+| task_types | random / dataset / manual（runner 内分支处理；`random` 需要同时提供 `tokenizer_path`，`dataset` 即「自定义数据集」） |
 | api | `api`（协议：`openai` / `anthropic` / `openai_responses` / `dashscope`；由「接口协议」下拉接管） |
 | multi_turn | `multi_turn`（多轮对话压测开关） |
 | min_turns / max_turns | `min_turns` / `max_turns`（多轮轮数范围；`max_turns` 同时是多轮数据集的截断上限） |
@@ -198,6 +222,9 @@ evalscope 的 perf 模块本身没有 Anthropic 插件（请求体与响应解�
 
 已做的处理：
 
+- `perf_anthropic.py`：失败请求同样写 `completed_time` / `query_latency`，并在 `error` 首行加
+  `[failed after X.XXs]`。**秒断（<0.1s）= 连接被拒 / 被网关掐断；数秒后才断 = 等响应头超时
+  或上游崩溃**，两者的排查方向完全不同，光看 traceback 区分不出来
 - `perf_anthropic.py`：**默认不重试**（`GATEWAY_MAX_RETRIES = 0`）。压测要如实反映全链路稳定性，
   网关把上游失败包成 400/503、连接被拒 / EOF / 超时都直接计入失败请求与响应码分布；
   一旦重试，失败率与 P99 都会被"抹平"成一次成功，结果不可信。

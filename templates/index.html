@@ -114,7 +114,7 @@
           <label>任务类型 <span class="req">*</span></label>
           <div class="check-row" id="task-type-row">
             <label class="chk"><input type="checkbox" class="task-type-cb" value="random"> random 随机长度</label>
-            <label class="chk"><input type="checkbox" class="task-type-cb" value="openclaw" checked> dataset 数据集</label>
+            <label class="chk"><input type="checkbox" class="task-type-cb" value="dataset" checked> dataset 自定义数据集</label>
             <label class="chk"><input type="checkbox" class="task-type-cb" value="manual"> manual 手动问题</label>
           </div>
         </div>
@@ -126,14 +126,14 @@
           <div class="rows-tip" id="builtin-dataset-tip">来自 <code>datasets/manifest.json</code>，由 <code>python mock_dataset.py</code> 生成</div>
         </div>
         <div class="field">
-          <label for="openclaw_dataset_name">dataset 名称</label>
-          <input id="openclaw_dataset_name" type="text" list="dataset-presets"
+          <label for="dataset_name">dataset 名称</label>
+          <input id="dataset_name" type="text" list="dataset-presets"
             placeholder="line_by_line / openqa / custom / trie_agentic_coding …" spellcheck="false">
           <datalist id="dataset-presets"></datalist>
         </div>
         <div class="field">
-          <label for="openclaw_dataset_path">dataset 路径</label>
-          <input id="openclaw_dataset_path" type="text" placeholder="input50.jsonl（line_by_line / custom 必填）" spellcheck="false">
+          <label for="dataset_path">dataset 路径</label>
+          <input id="dataset_path" type="text" placeholder="input50.jsonl（line_by_line / custom 必填）" spellcheck="false">
         </div>
 
         <div class="field field-wide">

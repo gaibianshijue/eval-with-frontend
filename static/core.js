@@ -17,7 +17,7 @@ const DOM = {
     modelName: $('model_name'), apiUrl: $('api_url'), tokenizerPath: $('tokenizer_path'),
     apiKeyContainer: $('api-key-container'), keySummary: $('key-summary'),
     addApiKeyBtn: $('add-api-key-btn'),
-    datasetName: $('openclaw_dataset_name'), datasetPath: $('openclaw_dataset_path'),
+    datasetName: $('dataset_name'), datasetPath: $('dataset_path'),
     manualContainer: $('manual-dataset-container'), addManualBtn: $('add-manual-btn'),
     manualCount: $('manual-count'),
     ioContainer: $('io-group-container'), crContainer: $('cr-group-container'),
@@ -206,7 +206,7 @@ function updateMultiTurnPreview() {
     const minT = Math.max(1, parseInt(DOM.minTurns.value, 10) || 1);
     const maxT = Math.max(minT, parseInt(DOM.maxTurns.value, 10) || minT);
     const isRandom = isTaskChecked('random');
-    const isDataset = isTaskChecked('openclaw');
+    const isDataset = isTaskChecked('dataset');
     const prefix = parseInt(DOM.prefixLength.value, 10) || 0;
     const repeats = Math.max(1, parseInt(DOM.testRepeats.value, 10) || 1);
     const number = firstRowValue(DOM.crContainer, 'cr-number');
@@ -387,7 +387,7 @@ function applyBuiltinDataset(idx) {
     DOM.datasetPath.value = d.path || '';
     // 内置数据集只跑 dataset 任务，避免和 random/manual 混着跑
     document.querySelectorAll('.task-type-cb').forEach((cb) => {
-        cb.checked = cb.value === 'openclaw';
+        cb.checked = cb.value === 'dataset';
         cb.closest('.chk').classList.toggle('checked', cb.checked);
     });
     DOM.multiTurn.checked = !!d.multi_turn;
@@ -483,8 +483,8 @@ function collectConfig() {
         tokenizer_path: DOM.tokenizerPath.value.trim(),
         openai_api_keys: [...DOM.apiKeyContainer.querySelectorAll('.api-key-input')]
             .map((i) => i.value.trim()).filter(Boolean),
-        openclaw_dataset_name: DOM.datasetName.value.trim() || 'line_by_line',
-        openclaw_dataset_path: DOM.datasetPath.value.trim(),
+        dataset_name: DOM.datasetName.value.trim() || 'line_by_line',
+        dataset_path: DOM.datasetPath.value.trim(),
         test_repeats: parseInt(DOM.testRepeats.value, 10) || 1,
         wait_between_tests: parseInt(DOM.waitBetween.value, 10) || 0,
         log_every_n_query: parseInt(DOM.logEveryN.value, 10) || 100,
@@ -503,8 +503,11 @@ function applyConfig(cfg) {
     if (cfg.model_name !== undefined) DOM.modelName.value = cfg.model_name || '';
     if (cfg.api_url !== undefined) DOM.apiUrl.value = cfg.api_url || '';
     if (cfg.tokenizer_path !== undefined) DOM.tokenizerPath.value = cfg.tokenizer_path || '';
-    if (cfg.openclaw_dataset_name !== undefined) DOM.datasetName.value = cfg.openclaw_dataset_name || '';
-    if (cfg.openclaw_dataset_path !== undefined) DOM.datasetPath.value = cfg.openclaw_dataset_path || '';
+    // 兼容早期 localStorage / 命令解析结果里的 openclaw_dataset_* 键名
+    const dsName = cfg.dataset_name ?? cfg.openclaw_dataset_name;
+    const dsPath = cfg.dataset_path ?? cfg.openclaw_dataset_path;
+    if (dsName !== undefined) DOM.datasetName.value = dsName || '';
+    if (dsPath !== undefined) DOM.datasetPath.value = dsPath || '';
     if (cfg.stream !== undefined) DOM.streamMode.value = cfg.stream ? 'true' : 'false';
     if (cfg.api !== undefined) DOM.apiProtocol.value = cfg.api || 'openai';
     if (cfg.multi_turn !== undefined) DOM.multiTurn.checked = !!cfg.multi_turn;
@@ -568,16 +571,16 @@ function validateConfig(cfg) {
     if (cfg.task_types.includes('random') && !cfg.tokenizer_path) {
         return fail('random 任务必须填写 tokenizer 路径', DOM.tokenizerPath);
     }
-    if (cfg.task_types.includes('openclaw') &&
-        ['line_by_line', 'custom', 'custom_multi_turn', 'mock_messages'].includes(cfg.openclaw_dataset_name) &&
-        !cfg.openclaw_dataset_path) {
+    if (cfg.task_types.includes('dataset') &&
+        ['line_by_line', 'custom', 'custom_multi_turn', 'mock_messages'].includes(cfg.dataset_name) &&
+        !cfg.dataset_path) {
         return fail('当前 dataset 需要填写数据集路径', DOM.datasetPath);
     }
     if (cfg.task_types.includes('manual') && !cfg.manual_dataset.length) {
         return fail('manual 任务至少需要一个问题');
     }
-    if (cfg.task_types.includes('openclaw') && !cfg.multi_turn && isMultiTurnDataset(cfg.openclaw_dataset_name)) {
-        return fail(`dataset=${cfg.openclaw_dataset_name} 是多轮数据集，必须勾选「多轮对话压测 --multi-turn」`);
+    if (cfg.task_types.includes('dataset') && !cfg.multi_turn && isMultiTurnDataset(cfg.dataset_name)) {
+        return fail(`dataset=${cfg.dataset_name} 是多轮数据集，必须勾选「多轮对话压测 --multi-turn」`);
     }
     if (cfg.multi_turn) {
         if (cfg.min_turns < 1 || cfg.max_turns < cfg.min_turns) {
@@ -589,8 +592,8 @@ function validateConfig(cfg) {
         if (cfg.task_types.includes('random') && !cfg.tokenizer_path) {
             return fail('多轮 + random 需要 tokenizer 路径（random_multi_turn）', DOM.tokenizerPath);
         }
-        if (cfg.task_types.includes('openclaw') && cfg.openclaw_dataset_name === 'custom_multi_turn'
-            && !cfg.openclaw_dataset_path) {
+        if (cfg.task_types.includes('dataset') && cfg.dataset_name === 'custom_multi_turn'
+            && !cfg.dataset_path) {
             return fail('custom_multi_turn 需要填写数据集路径', DOM.datasetPath);
         }
     }

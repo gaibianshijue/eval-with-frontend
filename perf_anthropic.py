@@ -27,6 +27,7 @@ import asyncio
 import json
 import random
 import re
+import sys
 import time
 import traceback
 from typing import Any, Dict, List, Optional, Tuple, Union
@@ -490,6 +491,11 @@ class AnthropicPlugin(DefaultApiPlugin):
 
                 if 'text/event-stream' in content_type:
                     handler = StreamedResponseHandler()
+                    # message_stop 是 Anthropic SSE 的终止事件。网关（尤其代理型网关）
+                    # 常常在它之后继续 keep-alive 而不关连接，此时 iter_any() 会一直等
+                    # 到 sock_read（默认 600s）超时，表现为「最后 1~2 个请求卡住」。
+                    # 所以收到 message_stop 必须主动跳出，不能只靠连接关闭。
+                    stream_end = 0.0
                     async for chunk in response.content.iter_any():
                         if not chunk:
                             continue
@@ -499,6 +505,11 @@ class AnthropicPlugin(DefaultApiPlugin):
                                 continue
                             now = time.perf_counter()
                             etype = payload.get('type')
+
+                            if etype == 'message_stop':
+                                output.response_messages.append(payload)
+                                stream_end = now
+                                break
 
                             if etype == 'message_start':
                                 _apply_usage(output, (payload.get('message') or {}).get('usage'))
@@ -539,7 +550,12 @@ class AnthropicPlugin(DefaultApiPlugin):
                                     f"Anthropic stream error: {err.get('type', 'unknown')}: {err.get('message', '')}"
                                 )
 
-                    end = last if last > st else time.perf_counter()
+                        if stream_end:
+                            break
+
+                    # 有 message_stop 时，完成时间取终止事件的到达时刻，
+                    # 而不是最后一个 delta（否则会把 keep-alive 的空等时间算进去）。
+                    end = stream_end or (last if last > st else time.perf_counter())
                     output.completed_time = end
                     output.query_latency = max(end - st, 0.0)
                     if not output.first_chunk_latency:
@@ -579,7 +595,16 @@ class AnthropicPlugin(DefaultApiPlugin):
                 return output
         except Exception:  # noqa: BLE001
             output.success = False
-            output.error = ''.join(traceback.format_exception(*__import__('sys').exc_info()))
+            now = time.perf_counter()
+            # 失败也要落 completed_time / query_latency，否则 db 里失败记录的时间轴是 0，
+            # 前端算出来是几万秒的负数，也没法判断「秒断」还是「等很久才断」。
+            # 注意 MetricsAccumulator 只累加 success 的请求，这里不影响 Avg_Latency / TTFT。
+            output.completed_time = now
+            output.query_latency = max(now - st, 0.0)
+            tb = ''.join(traceback.format_exception(*sys.exc_info()))
+            # 首行带耗时：<0.1s 多为连接被拒 / 被网关掐断；数秒后才断多为等响应头超时
+            # 或上游崩溃，两种情况的排查方向完全不同
+            output.error = f'[failed after {output.query_latency:.2f}s]\n{tb}'
             logger.error(output.error)
         return output
 

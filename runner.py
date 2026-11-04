@@ -240,8 +240,8 @@ class RunConfig:
     api_url: str
     tokenizer_path: str
     openai_api_keys: list[str]       # 支持多 API Key，模拟多用户
-    openclaw_dataset_path: str
-    openclaw_dataset_name: str
+    dataset_path: str                # 「自定义数据集」任务的 jsonl 路径
+    dataset_name: str                # evalscope dataset 插件名（line_by_line / custom / …）
     test_repeats: int
     log_every_n_query: int
     prefix_length: int
@@ -275,18 +275,24 @@ class RunConfig:
             api_keys = [single] if single else []
         else:
             api_keys = [k for k in api_keys if k]  # 过滤空字符串
+        # 旧配置兼容：openclaw 概念已并入「自定义数据集」任务，字段名同步改名
+        dataset_name = str(
+            d.get("dataset_name") or d.get("openclaw_dataset_name") or "line_by_line"
+        ).strip() or "line_by_line"
+        dataset_path = str(d.get("dataset_path") or d.get("openclaw_dataset_path") or "").strip()
+        task_types = ["dataset" if t == "openclaw" else t for t in (d.get("task_types") or [])]
         return cls(
             model_name=str(d.get("model_name", "")).strip(),
             api_url=str(d.get("api_url", "")).strip(),
             tokenizer_path=str(d.get("tokenizer_path", "")).strip(),
             openai_api_keys=api_keys,
-            openclaw_dataset_path=str(d.get("openclaw_dataset_path", "")).strip(),
-            openclaw_dataset_name=str(d.get("openclaw_dataset_name", "line_by_line")).strip() or "line_by_line",
+            dataset_path=dataset_path,
+            dataset_name=dataset_name,
             test_repeats=int(d.get("test_repeats", 1) or 1),
             log_every_n_query=int(d.get("log_every_n_query", 500) or 500),
             prefix_length=int(d.get("prefix_length", 0) or 0),
             wait_between_tests=int(d.get("wait_between_tests", 0) or 0),
-            task_types=list(d.get("task_types") or []),
+            task_types=task_types,
             # input/output 为 0 或缺失都表示「不限制」，不传对应的 evalscope 参数
             input_output_groups=[IOGroup(int(g.get("input") or 0), int(g.get("output") or 0))
                                  for g in (d.get("input_output_groups") or [])]
@@ -330,16 +336,16 @@ class RunConfig:
         if not self.openai_api_keys:
             return "至少需要填写一个 API Key"
         for t in self.task_types:
-            if t not in ("random", "openclaw", "manual"):
+            if t not in ("random", "dataset", "manual"):
                 return f"未知 task_type: {t}"
             if t == "random" and not self.tokenizer_path:
                 return "选择了 random 任务但未填写 tokenizer_path（evalscope random dataset 需要 --tokenizer-path）"
-            if t == "openclaw" and not self.openclaw_dataset_name:
-                return "选择了 openclaw 任务但未填写 dataset 名称"
-            if t == "openclaw" and self.openclaw_dataset_name in (
+            if t == "dataset" and not self.dataset_name:
+                return "选择了「自定义数据集」任务但未填写 dataset 名称"
+            if t == "dataset" and self.dataset_name in (
                 "line_by_line", "custom", "custom_multi_turn", "mock_messages"
-            ) and not self.openclaw_dataset_path:
-                return f"dataset={self.openclaw_dataset_name} 需要填写数据集路径"
+            ) and not self.dataset_path:
+                return f"dataset={self.dataset_name} 需要填写数据集路径"
             if t == "manual":
                 qs = [str(m.get("question", "")).strip()
                       for m in self.manual_dataset if str(m.get("question", "")).strip()]
@@ -350,9 +356,9 @@ class RunConfig:
             return f"未知 api 协议: {self.api}（可用: {', '.join(available)}）"
         if self.tool_choice and not self.tools:
             return "填写了 tool_choice 但未配置 tools"
-        if (not self.multi_turn and "openclaw" in self.task_types
-                and self.openclaw_dataset_name in MULTI_TURN_DATASETS):
-            return (f"dataset={self.openclaw_dataset_name} 是多轮数据集，"
+        if (not self.multi_turn and "dataset" in self.task_types
+                and self.dataset_name in MULTI_TURN_DATASETS):
+            return (f"dataset={self.dataset_name} 是多轮数据集，"
                     "必须勾选多轮对话压测（multi_turn / --multi-turn）")
         if self.multi_turn:
             if self.api not in ApiRegistry.all_classes():
@@ -363,12 +369,12 @@ class RunConfig:
                 return "多轮模式不支持 manual 任务，请改用 custom_multi_turn 数据集"
             if "random" in self.task_types and not self.tokenizer_path:
                 return "多轮 + random 任务需要 tokenizer_path（random_multi_turn 依赖 tokenizer 生成上下文）"
-            if "openclaw" in self.task_types:
-                name = self.openclaw_dataset_name
+            if "dataset" in self.task_types:
+                name = self.dataset_name
                 if name not in MULTI_TURN_DATASETS:
                     return (f"多轮模式下 dataset={name} 不是多轮数据集，可用: "
                             + ", ".join(sorted(MULTI_TURN_DATASETS)))
-                if name in MULTI_TURN_PATH_REQUIRED and not self.openclaw_dataset_path:
+                if name in MULTI_TURN_PATH_REQUIRED and not self.dataset_path:
                     return f"dataset={name} 需要填写数据集路径"
         if not self.task_types:
             return "task_types 至少选一项"
@@ -730,10 +736,10 @@ class BenchmarkRunner:
                 dataset="line_by_line",
                 dataset_path=str(self._manual_dataset_path),
             )
-        # openclaw / 自定义 dataset
-        common["dataset"] = cfg.openclaw_dataset_name
-        if cfg.openclaw_dataset_path:
-            common["dataset_path"] = cfg.openclaw_dataset_path
+        # 自定义数据集：dataset 名直接交给 evalscope 的 dataset 插件
+        common["dataset"] = cfg.dataset_name
+        if cfg.dataset_path:
+            common["dataset_path"] = cfg.dataset_path
         # io.input = 0 表示不限制：不传 min/max_prompt_length，用 evalscope 默认（0 ~ 131072）
         if io.input > 0:
             common["min_prompt_length"] = io.input
