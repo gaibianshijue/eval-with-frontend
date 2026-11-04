@@ -69,6 +69,16 @@
       </div>
       <div class="card-body">
         <div class="field">
+          <label for="api_protocol">接口协议</label>
+          <select id="api_protocol">
+            <option value="openai">OpenAI Chat Completions · /v1/chat/completions</option>
+            <option value="anthropic">Anthropic Messages · /v1/messages</option>
+            <option value="openai_responses">OpenAI Responses · /v1/responses</option>
+            <option value="dashscope">DashScope</option>
+          </select>
+          <div class="rows-tip" id="protocol-tip">Anthropic 走原生 /v1/messages（x-api-key 鉴权），URL 只填域名或 /v1 即可自动补全</div>
+        </div>
+        <div class="field">
           <label for="model_name">模型名称 <span class="req">*</span></label>
           <input id="model_name" type="text" placeholder="deepseek-v4-flash" autocomplete="off">
         </div>
@@ -103,18 +113,76 @@
         <div class="field">
           <label>任务类型 <span class="req">*</span></label>
           <div class="check-row" id="task-type-row">
-            <label class="chk"><input type="checkbox" class="task-type-cb" value="random" checked> random 随机长度</label>
-            <label class="chk"><input type="checkbox" class="task-type-cb" value="openclaw"> dataset 数据集</label>
+            <label class="chk"><input type="checkbox" class="task-type-cb" value="random"> random 随机长度</label>
+            <label class="chk"><input type="checkbox" class="task-type-cb" value="openclaw" checked> dataset 数据集</label>
             <label class="chk"><input type="checkbox" class="task-type-cb" value="manual"> manual 手动问题</label>
           </div>
         </div>
         <div class="field">
+          <label for="builtin_dataset">内置数据集</label>
+          <select id="builtin_dataset">
+            <option value="">— 不使用（手动填写下方名称/路径）—</option>
+          </select>
+          <div class="rows-tip" id="builtin-dataset-tip">来自 <code>datasets/manifest.json</code>，由 <code>python mock_dataset.py</code> 生成</div>
+        </div>
+        <div class="field">
           <label for="openclaw_dataset_name">dataset 名称</label>
-          <input id="openclaw_dataset_name" type="text" placeholder="line_by_line / openqa / custom …" spellcheck="false">
+          <input id="openclaw_dataset_name" type="text" list="dataset-presets"
+            placeholder="line_by_line / openqa / custom / trie_agentic_coding …" spellcheck="false">
+          <datalist id="dataset-presets"></datalist>
         </div>
         <div class="field">
           <label for="openclaw_dataset_path">dataset 路径</label>
           <input id="openclaw_dataset_path" type="text" placeholder="input50.jsonl（line_by_line / custom 必填）" spellcheck="false">
+        </div>
+
+        <div class="field field-wide">
+          <label class="switch"><input type="checkbox" id="multi_turn"> 多轮对话压测（--multi-turn）</label>
+          <div class="rows-tip">多轮下「请求数」表示对话数；random 任务自动改用 random_multi_turn（需 tokenizer）</div>
+        </div>
+        <div class="multi-turn-box" id="multi-turn-box" hidden>
+          <div class="inline-grid">
+            <div class="inline-field">
+              <label for="min_turns">最小轮数 --min-turns</label>
+              <input id="min_turns" type="number" min="1" value="2">
+            </div>
+            <div class="inline-field">
+              <label for="max_turns">最大轮数 --max-turns</label>
+              <input id="max_turns" type="number" min="1" value="4">
+            </div>
+            <div class="inline-field">
+              <label for="first_turn_length">首轮长度 (tok)</label>
+              <input id="first_turn_length" type="number" min="0" value="0" placeholder="0 = 默认 65000">
+            </div>
+            <div class="inline-field">
+              <label for="subsequent_turn_length">后续轮增量 (tok)</label>
+              <input id="subsequent_turn_length" type="number" min="0" value="0" placeholder="0 = 默认 500">
+            </div>
+          </div>
+          <div class="rows-tip">
+            含 tool_call 的轨迹数据集：<code>trie_agentic_coding</code> / <code>trie_code_qa</code> /
+            <code>trie_office_work</code> / <code>swe_smith</code>（工具结果注入为后续消息，但不会向模型下发 tools 定义）
+          </div>
+          <div class="mt-preview" id="mt-preview" hidden></div>
+        </div>
+
+        <div class="field field-wide">
+          <label class="switch"><input type="checkbox" id="tools_enabled"> 下发工具定义（tools / function calling）</label>
+          <div class="rows-tip">OpenAI 形状的 tools；选 anthropic 协议时后端自动转成 <code>input_schema</code></div>
+        </div>
+        <div class="multi-turn-box" id="tools-box" hidden>
+          <textarea id="tools_json" rows="6" spellcheck="false"
+            placeholder='[{"type":"function","function":{"name":"get_weather","description":"查询天气","parameters":{"type":"object","properties":{"city":{"type":"string"}},"required":["city"]}}}]'></textarea>
+          <div class="inline-grid">
+            <div class="inline-field">
+              <label for="tool_choice">tool_choice</label>
+              <input id="tool_choice" type="text" placeholder="auto / none / required / 函数名" spellcheck="false">
+            </div>
+            <div class="inline-field">
+              <label>&nbsp;</label>
+              <button class="btn btn-ghost btn-sm" id="btn-tools-sample" type="button">填入示例</button>
+            </div>
+          </div>
         </div>
 
         <details class="sect stack-gap" id="manual-sect">
@@ -140,7 +208,7 @@
       <div class="card-body">
         <div class="inline-grid">
           <div class="inline-field">
-            <label>输入 / 输出 token 组</label>
+            <label>输入 / 输出 token 组（0 或留空 = 不限制）</label>
             <div class="rows scroll" id="io-group-container"></div>
             <div class="rows-foot"><button class="add-btn" id="add-io-btn">+ 添加组合</button></div>
           </div>
@@ -228,8 +296,13 @@
       <div class="progress-wrap">
         <div class="progress-track"><div class="progress-fill" id="progress-fill"></div></div>
         <div class="progress-meta">
-          <span><strong id="progress-text">0 / 0</strong> <span id="progress-pct">(0%)</span></span>
+          <span>任务 <strong id="progress-text">0 / 0</strong> <span id="progress-pct">(0%)</span></span>
           <span>剩余 <strong id="progress-eta">--</strong></span>
+        </div>
+        <div class="progress-track progress-track-sub"><div class="progress-fill progress-fill-sub" id="progress-sub-fill"></div></div>
+        <div class="progress-meta progress-meta-sub">
+          <span>当前任务请求 <strong id="progress-sub-text">--</strong></span>
+          <span id="progress-sub-pct"></span>
         </div>
         <div class="progress-detail" id="progress-detail"></div>
         <div class="stat-grid">
@@ -277,7 +350,7 @@
             <th>用户</th><th>任务</th><th>输入</th><th>输出</th><th>并发</th><th>请求</th>
             <th>Latency<br>Avg</th><th>Latency<br>P90</th>
             <th>TTFT<br>Avg</th><th>TTFT<br>P90</th><th>TPOT<br>Avg</th><th>ITL<br>Avg</th>
-            <th>实输入</th><th>实输出</th><th>输出吞吐</th><th>RPS</th><th>总吞吐</th><th>重复</th>
+            <th>实输入</th><th>实输出</th><th>轮数</th><th>输出吞吐</th><th>RPS</th><th>总吞吐</th><th>重复</th>
           </tr>
         </thead>
         <tbody id="results-tbody"></tbody>
@@ -287,7 +360,80 @@
   </div>
 </section>
 
+<!-- ================= 请求详情（benchmark_data.db） ================= -->
+<section class="card stack-gap" id="requests-card">
+  <div class="card-head">
+    <span class="idx">⌗</span>
+    <span class="card-title">请求详情</span>
+    <span class="card-desc" id="db-summary">读取 evalscope 的 benchmark_data.db，查看单次请求体与响应</span>
+    <span class="grow"></span>
+    <button class="btn btn-ghost btn-sm" id="btn-db-refresh">刷新</button>
+  </div>
+  <div class="card-body">
+    <div class="inline-grid db-filters">
+      <div class="inline-field">
+        <label for="db-run">运行 / 子测试</label>
+        <select id="db-run"><option value="">（暂无 db 文件）</option></select>
+      </div>
+      <div class="inline-field">
+        <label for="db-status">响应码</label>
+        <select id="db-status"><option value="">全部</option></select>
+      </div>
+      <div class="inline-field">
+        <label for="db-q">关键字</label>
+        <input id="db-q" type="text" placeholder="搜索请求体 / 错误 / 响应文本" spellcheck="false">
+      </div>
+      <div class="inline-field">
+        <label for="db-size">每页</label>
+        <select id="db-size">
+          <option value="20">20</option>
+          <option value="50">50</option>
+          <option value="100">100</option>
+        </select>
+      </div>
+    </div>
+    <div class="db-stat" id="db-stat"></div>
+    <div class="results-scroll">
+      <table class="results db-table">
+        <thead>
+          <tr>
+            <th>ID</th><th>响应码</th><th>相对时间</th><th>Latency</th><th>TTFT</th>
+            <th>输入</th><th>输出</th><th>轮次</th><th>内容预览</th>
+          </tr>
+        </thead>
+        <tbody id="db-tbody"></tbody>
+      </table>
+    </div>
+    <div class="empty-state" id="db-empty">该 db 暂无记录（或未选择运行）</div>
+    <div class="db-pager">
+      <button class="btn btn-ghost btn-sm" id="db-prev" type="button">‹ 上一页</button>
+      <span id="db-page-info">第 1 / 1 页</span>
+      <button class="btn btn-ghost btn-sm" id="db-next" type="button">下一页 ›</button>
+    </div>
+  </div>
+</section>
+
 </main>
+
+<div class="modal-mask" id="req-mask" hidden>
+  <div class="modal">
+    <div class="modal-head">
+      <span class="modal-title" id="req-title">请求详情</span>
+      <span class="grow"></span>
+      <button class="btn btn-ghost btn-sm" id="req-copy" type="button">复制</button>
+      <button class="btn btn-ghost btn-sm" id="req-close" type="button">✕</button>
+    </div>
+    <div class="modal-meta" id="req-meta"></div>
+    <div class="modal-tabs" id="req-tabs">
+      <button class="tab is-active" data-tab="req" type="button">请求体</button>
+      <button class="tab" data-tab="resp" type="button">响应内容</button>
+      <button class="tab" data-tab="headers" type="button">响应头</button>
+      <button class="tab" data-tab="events" type="button">原始事件</button>
+      <button class="tab" data-tab="tools" type="button">tool_calls</button>
+    </div>
+    <pre class="modal-body" id="req-body"></pre>
+  </div>
+</div>
 
 <div class="toast-wrap" id="toast-wrap"></div>
 <script src="/static/core.js"></script>

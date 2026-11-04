@@ -90,7 +90,43 @@ MANAGED_FIELDS = {
     "dataset", "dataset_path", "min_prompt_length", "max_prompt_length",
     "outputs_dir", "tokenizer_path", "stream",
     "prefix_length", "log_every_n_query", "enable_progress_tracker",
+    # 协议与多轮由独立控件接管
+    "api", "multi_turn", "min_turns", "max_turns", "multi_turn_args",
 }
+
+#: evalscope 的多轮数据集（走 run_multi_turn_benchmark 分支）
+MULTI_TURN_DATASETS = {
+    "random_multi_turn",
+    "share_gpt_zh_multi_turn",
+    "share_gpt_en_multi_turn",
+    "custom_multi_turn",
+    "swe_smith",
+    "trie_agentic_coding",
+    "trie_code_qa",
+    "trie_office_work",
+}
+
+#: 必须提供本地路径的多轮数据集
+MULTI_TURN_PATH_REQUIRED = {"custom_multi_turn"}
+
+#: 前端「数据集」下拉预设（group 仅用于分组展示）
+DATASET_PRESETS: list[dict] = [
+    {"name": "random", "label": "random（随机 token，需 tokenizer）", "group": "单轮", "needs_path": False},
+    {"name": "line_by_line", "label": "line_by_line（每行一个问题）", "group": "单轮", "needs_path": True},
+    {"name": "openqa", "label": "openqa（内置问答集）", "group": "单轮", "needs_path": False},
+    {"name": "longalpaca", "label": "longalpaca（长上下文）", "group": "单轮", "needs_path": False},
+    {"name": "flickr8k", "label": "flickr8k（多模态）", "group": "单轮", "needs_path": False},
+    {"name": "custom", "label": "custom（自定义 JSONL）", "group": "单轮", "needs_path": True},
+    {"name": "mock_messages", "label": "mock_messages（完整 messages 快照重放）", "group": "单轮", "needs_path": True},
+    {"name": "random_multi_turn", "label": "random_multi_turn（合成多轮，需 tokenizer）", "group": "多轮", "needs_path": False},
+    {"name": "share_gpt_zh_multi_turn", "label": "share_gpt_zh_multi_turn（中文多轮）", "group": "多轮", "needs_path": False},
+    {"name": "share_gpt_en_multi_turn", "label": "share_gpt_en_multi_turn（英文多轮）", "group": "多轮", "needs_path": False},
+    {"name": "custom_multi_turn", "label": "custom_multi_turn（自定义多轮 JSONL）", "group": "多轮", "needs_path": True},
+    {"name": "swe_smith", "label": "swe_smith（agentic 工具轨迹）", "group": "Agentic", "needs_path": False},
+    {"name": "trie_agentic_coding", "label": "trie_agentic_coding（编码 agent 轨迹）", "group": "Agentic", "needs_path": False},
+    {"name": "trie_code_qa", "label": "trie_code_qa（代码问答轨迹）", "group": "Agentic", "needs_path": False},
+    {"name": "trie_office_work", "label": "trie_office_work（办公 agent 轨迹）", "group": "Agentic", "needs_path": False},
+]
 
 # 计算属性 / 运行时注入，不进入 UI
 HIDDEN_FIELDS = {"model_id", "func"}
@@ -165,10 +201,7 @@ def describe_arguments() -> dict:
             grouped[n] = key
 
     # 协议枚举（evalscope 用 register_api 注册，没有出现在 argparse choices 里）
-    choices["api"] = [
-        "openai", "openai_responses", "openai_embedding", "openai_rerank",
-        "local", "local_vllm", "dashscope", "custom",
-    ]
+    choices["api"] = api_names()
 
     fields: list[dict] = []
     for name, info in Arguments.model_fields.items():
@@ -205,7 +238,23 @@ def describe_arguments() -> dict:
         "fields": fields,
         "field_names": sorted(Arguments.model_fields.keys()),
         "managed_fields": sorted(MANAGED_FIELDS),
+        "apis": api_names(),
+        "dataset_presets": DATASET_PRESETS,
+        "multi_turn_datasets": sorted(MULTI_TURN_DATASETS),
     }
+
+
+def api_names() -> list[str]:
+    """已注册的 API 插件名（含本工具补的 anthropic）。"""
+    try:
+        import perf_anthropic  # noqa: F401  触发注册
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        from evalscope.perf.plugin.registry import ApiRegistry
+        return sorted(ApiRegistry.all_classes())
+    except Exception:  # noqa: BLE001
+        return ["openai"]
 
 
 def _evalscope_version() -> str:
@@ -249,7 +298,7 @@ def _split_task_types(dataset: Optional[str]) -> tuple[list[str], list[str]]:
     ds = (dataset or "").strip()
     if not ds:
         return ["random"], warnings
-    if ds == "random":
+    if ds in ("random", "random_multi_turn"):
         return ["random"], warnings
     if ds == "line_by_line":
         warnings.append("dataset=line_by_line 无法区分 openclaw 与 manual，默认按 openclaw 处理")
@@ -352,6 +401,22 @@ def parse_perf_command(command: str) -> dict:
             continue
         overrides[k] = _default_json(v)
 
+    # 协议 / 多轮：从命令行显式参数回填到批量表单顶层字段
+    api = str(normalized.get("api") or "openai").strip() or "openai"
+    multi_turn = bool(normalized.get("multi_turn", False)) or dataset in MULTI_TURN_DATASETS
+    min_turns = int(normalized.get("min_turns") or 1)
+    max_turns = int(normalized.get("max_turns") or (2 if multi_turn else 1))
+    mt_args = normalized.get("multi_turn_args") or {}
+    if isinstance(mt_args, str):
+        try:
+            mt_args = json.loads(mt_args)
+        except json.JSONDecodeError:
+            mt_args = {}
+    if "multi_turn_args" not in explicit or not isinstance(mt_args, dict):
+        mt_args = {}
+    first_turn_length = int(mt_args.get("first_turn_length") or 0)
+    subsequent_turn_length = int(mt_args.get("subsequent_turn_length") or 0)
+
     config = {
         "model_name": model,
         "api_url": url,
@@ -361,6 +426,12 @@ def parse_perf_command(command: str) -> dict:
         "openclaw_dataset_name": dataset,
         "stream": bool(normalized.get("stream", True)),
         "task_types": task_types,
+        "api": api,
+        "multi_turn": multi_turn,
+        "min_turns": min_turns,
+        "max_turns": max_turns,
+        "first_turn_length": first_turn_length,
+        "subsequent_turn_length": subsequent_turn_length,
         "input_output_groups": io_groups,
         "concurrency_request_groups": cr_groups,
         "evalscope_args": overrides,

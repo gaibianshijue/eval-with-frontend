@@ -1,11 +1,13 @@
 """CSV 输出 —— 字段格式与 eval_bench0522.sh 对齐（新增 api_key_index 列）。
 
-表头 22 列（按顺序）：
+表头 23 列（按顺序）：
 test_timestamp, model_name, api_key_index, task_type, repeat_num, Prompt_length, Max_tokens,
 Number_of_concurrency, Total_requests, Succeed_requests, Avg_Latency(s),
 Latency_P90(s), TTFT_Avg(s), TTFT_P90(s), TPOT_Avg(s), Avg_Inter_Token_Latency(s),
-Avg_Input_Tokens, Avg_Output_Tokens, Output_through(tok/s), RPS(req/s),
+Avg_Input_Tokens, Avg_Output_Tokens, Avg_Turns, Output_through(tok/s), RPS(req/s),
 Total_token_through(tok/s), output_dir
+
+`Avg_Turns` 仅多轮模式有值（单轮为空）。
 """
 
 from __future__ import annotations
@@ -24,7 +26,7 @@ HEADER = [
     "Avg_Latency(s)", "Latency_P90(s)",
     "TTFT_Avg(s)", "TTFT_P90(s)",
     "TPOT_Avg(s)", "Avg_Inter_Token_Latency(s)",
-    "Avg_Input_Tokens", "Avg_Output_Tokens",
+    "Avg_Input_Tokens", "Avg_Output_Tokens", "Avg_Turns",
     "Output_through(tok/s)", "RPS(req/s)", "Total_token_through(tok/s)",
     "output_dir",
 ]
@@ -62,6 +64,21 @@ def _ms_to_s(v) -> float:
     return float(v) / 1000.0
 
 
+def _avg_turns_value(metrics) -> float | None:
+    """多轮平均轮数；单轮（0/None）返回 None 以便 CSV 留空。"""
+    v = getattr(metrics, "avg_turns", None)
+    try:
+        v = float(v) if v is not None else 0.0
+    except (TypeError, ValueError):
+        return None
+    return v if v > 0 else None
+
+
+def _avg_turns_of(runs) -> float | None:
+    vals = [v for v in (_avg_turns_value(r["metrics"]) for r in runs) if v is not None]
+    return statistics.fmean(vals) if vals else None
+
+
 def _to_row(
     task_type: str,
     repeat_label: str,
@@ -92,6 +109,7 @@ def _to_row(
         _fmt(_ms_to_s(getattr(metrics, "avg_itl", 0.0))),
         _fmt(getattr(metrics, "avg_input_tokens", 0.0)),
         _fmt(getattr(metrics, "avg_output_tokens", 0.0)),
+        _fmt(_avg_turns_value(metrics)),
         _fmt(getattr(metrics, "output_token_throughput", 0.0)),
         _fmt(getattr(metrics, "request_throughput", 0.0)),
         _fmt(getattr(metrics, "total_token_throughput", 0.0)),
@@ -177,6 +195,7 @@ class CsvWriter:
             _fmt(_avg(lambda r: _ms_to_s(r["metrics"].avg_itl))),
             _fmt(_avg(lambda r: r["metrics"].avg_input_tokens)),
             _fmt(_avg(lambda r: r["metrics"].avg_output_tokens)),
+            _fmt(_avg_turns_of(runs)),
             _fmt(_avg(lambda r: r["metrics"].output_token_throughput)),
             _fmt(_avg(lambda r: r["metrics"].request_throughput)),
             _fmt(_avg(lambda r: r["metrics"].total_token_throughput)),

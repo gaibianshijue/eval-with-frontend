@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import json
 import queue
 import threading
 from collections import deque
@@ -16,6 +17,7 @@ from pathlib import Path
 
 from flask import Flask, Response, jsonify, render_template, request, send_file
 
+import request_store
 from evalscope_schema import describe_arguments, parse_perf_command
 from runner import BenchmarkRunner
 
@@ -24,6 +26,7 @@ WEB_DIR = Path(__file__).resolve().parent
 PROJECT_DIR = WEB_DIR.parent
 HISTORY_DIR = WEB_DIR / "history"
 HISTORY_DIR.mkdir(exist_ok=True)
+DATASETS_DIR = WEB_DIR / "datasets"
 
 # ---------- Flask ----------
 app = Flask(__name__, template_folder=str(WEB_DIR / "templates"))
@@ -128,6 +131,82 @@ def evalscope_parse_command():
         return jsonify({"ok": False, "error": str(e)}), 400
     except Exception as e:  # noqa: BLE001
         return jsonify({"ok": False, "error": f"解析异常: {e}"}), 500
+
+
+@app.route("/datasets", methods=["GET"])
+def datasets():
+    """列出 datasets/manifest.json 里登记的本地数据集（供前端一键选择）。"""
+    manifest = DATASETS_DIR / "manifest.json"
+    if not manifest.exists():
+        return jsonify({"ok": True, "datasets": [],
+                        "hint": "尚未生成，执行 python mock_dataset.py 后刷新"})
+    try:
+        meta = json.loads(manifest.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as e:
+        return jsonify({"ok": False, "error": f"manifest 读取失败: {e}"}), 500
+    items = []
+    for entry in meta.get("datasets") or []:
+        path = DATASETS_DIR / str(entry.get("file", ""))
+        if not path.exists():
+            continue
+        items.append({**entry, "path": str(path), "bytes": path.stat().st_size})
+    return jsonify({
+        "ok": True,
+        "source": meta.get("source"),
+        "source_file": meta.get("source_file"),
+        "source_messages": meta.get("source_messages"),
+        "generated_at": meta.get("generated_at"),
+        "datasets": items,
+    })
+
+
+@app.route("/db/runs", methods=["GET"])
+def db_runs():
+    """列出 history 下所有 sub-test 的 benchmark_data.db。"""
+    try:
+        return jsonify({"ok": True, "runs": request_store.list_databases(HISTORY_DIR)})
+    except Exception as e:  # noqa: BLE001
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/db/requests", methods=["GET"])
+def db_requests():
+    """分页查询单次请求记录，支持响应码 / 关键字筛选。"""
+    db = request.args.get("db", "")
+    path = request_store.resolve_db(HISTORY_DIR, db)
+    if not path:
+        return jsonify({"ok": False, "error": "db 文件不存在或不在 history 目录内"}), 404
+    try:
+        data = request_store.query(
+            path,
+            status=request.args.get("status", ""),
+            keyword=request.args.get("q", ""),
+            page=request.args.get("page", 1),
+            size=request.args.get("size", 20),
+        )
+    except Exception as e:  # noqa: BLE001
+        return jsonify({"ok": False, "error": f"读取 db 失败: {e}"}), 500
+    return jsonify({"ok": True, "db": db, **data})
+
+
+@app.route("/db/request", methods=["GET"])
+def db_request():
+    """单条请求详情：请求体 + 解码后的响应内容（含 tool_calls）。"""
+    db = request.args.get("db", "")
+    path = request_store.resolve_db(HISTORY_DIR, db)
+    if not path:
+        return jsonify({"ok": False, "error": "db 文件不存在或不在 history 目录内"}), 404
+    try:
+        rowid = int(request.args.get("id", ""))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "id 必须是整数"}), 400
+    try:
+        data = request_store.detail(path, rowid)
+    except Exception as e:  # noqa: BLE001
+        return jsonify({"ok": False, "error": f"读取记录失败: {e}"}), 500
+    if data is None:
+        return jsonify({"ok": False, "error": f"记录 {rowid} 不存在"}), 404
+    return jsonify({"ok": True, "db": db, **data})
 
 
 @app.route("/download/csv", methods=["GET"])

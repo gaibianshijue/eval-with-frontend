@@ -352,33 +352,49 @@ function buildCommand() {
 
     add('--model', cfg.model_name);
     add('--url', cfg.api_url);
+    if (cfg.api && cfg.api !== 'openai') add('--api', cfg.api);
     if (cfg.openai_api_keys.length) add('--api-key', cfg.openai_api_keys.join(','));
 
     const tt = cfg.task_types || [];
     if (tt.includes('openclaw')) {
         add('--dataset', cfg.openclaw_dataset_name);
         add('--dataset-path', cfg.openclaw_dataset_path);
+        const inputs = cfg.input_output_groups.map((g) => g.input).filter((v) => v > 0);
+        if (inputs.length) {
+            add('--min-prompt-length', Math.min(...inputs));
+            add('--max-prompt-length', Math.max(...inputs));
+        }
     } else if (tt.includes('manual')) {
         add('--dataset', 'line_by_line');
         add('--dataset-path', '<手动数据集落盘文件.jsonl>');
     } else {
-        add('--dataset', 'random');
+        add('--dataset', cfg.multi_turn ? 'random_multi_turn' : 'random');
         add('--tokenizer-path', cfg.tokenizer_path);
-        const inputs = cfg.input_output_groups.map((g) => g.input);
+        const inputs = cfg.input_output_groups.map((g) => g.input).filter((v) => v > 0);
         if (inputs.length) {
             add('--min-prompt-length', Math.min(...inputs));
             add('--max-prompt-length', Math.max(...inputs));
         }
     }
 
+    if (cfg.multi_turn) {
+        parts.push('--multi-turn');
+        add('--min-turns', cfg.min_turns);
+        add('--max-turns', cfg.max_turns);
+        const mt = {};
+        if (cfg.first_turn_length > 0) mt.first_turn_length = cfg.first_turn_length;
+        if (cfg.subsequent_turn_length > 0) mt.subsequent_turn_length = cfg.subsequent_turn_length;
+        if (Object.keys(mt).length) parts.push('--multi-turn-args', "'" + JSON.stringify(mt) + "'");
+    }
+
     if (cfg.concurrency_request_groups.length) {
         add('--parallel', cfg.concurrency_request_groups.map((g) => g.parallel));
         add('--number', cfg.concurrency_request_groups.map((g) => g.number));
     }
-    const outputs = cfg.input_output_groups.map((g) => g.output);
+    const outputs = cfg.input_output_groups.map((g) => g.output).filter((v) => v > 0);
     if (outputs.length) add('--max-tokens', outputs.length === 1 ? outputs[0] : outputs);
 
-    add('--stream', cfg.stream ? 'true' : 'false');
+    parts.push(cfg.stream ? '--stream' : '--no-stream');
     add('--log-every-n-query', cfg.log_every_n_query);
     add('--prefix-length', cfg.prefix_length);
 
@@ -499,6 +515,7 @@ fetch('/evalscope/schema')
         schema = data;
         managedFields = data.managed_fields || [];
         render();
+        if (core) core.fillDatasetPresets(data.dataset_presets);
         resolveReady();
     })
     .catch((e) => {
@@ -514,7 +531,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
 window.AdvPanel = {
     ready,
-    init: (c) => { core = c; },
+    init: (c) => {
+        core = c;
+        if (schema) core.fillDatasetPresets(schema.dataset_presets);
+    },
     getValues, setValues, reset, validate, buildCommand,
 };
 })();

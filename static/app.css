@@ -77,6 +77,8 @@ code, .mono { font-family: var(--mono); }
 .field { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 6px 12px; align-items: center; padding: 5px 0; }
 .field > label { font-size: 12.5px; color: var(--text-soft); font-weight: 500; text-align: right; line-height: 1.35; word-break: break-word; }
 .field .hint { grid-column: 2; font-size: 11px; color: var(--muted); margin-top: -2px; }
+.field-wide { grid-template-columns: 1fr; align-items: start; gap: 4px; }
+.field-wide > label { text-align: left; }
 .req { color: var(--err); }
 input[type=text], input[type=password], input[type=number], input[type=url], select, textarea { width: 100%; padding: 6px 10px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: #fff; color: var(--text); font-size: 13px; font-family: inherit; outline: none; transition: border-color .15s, box-shadow .15s; }
 input::placeholder, textarea::placeholder { color: #aab2c2; }
@@ -124,7 +126,20 @@ textarea { resize: vertical; line-height: 1.5; }
 .rows-foot { display: flex; align-items: center; gap: 10px; margin-top: 8px; flex-wrap: wrap; }
 .add-btn { display: inline-flex; align-items: center; gap: 5px; background: #fff; border: 1px dashed var(--line-strong); border-radius: 999px; color: var(--text-soft); cursor: pointer; font-size: 12.5px; padding: 4px 13px; transition: all .15s; }
 .add-btn:hover { border-color: var(--brand); color: var(--brand); background: var(--brand-soft); }
-.rows-tip { font-size: 11.5px; color: var(--muted); }
+.rows-tip { font-size: 11.5px; color: var(--muted); line-height: 1.6; }
+.rows-tip code { font-family: var(--mono); font-size: 11px; background: #eef2f9; border-radius: 4px; padding: 1px 4px; }
+
+/* 多轮参数区块 */
+.multi-turn-box { display: flex; flex-direction: column; gap: 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--bg-soft); }
+.multi-turn-box[hidden] { display: none; }
+
+/* 多轮长度预估 */
+.mt-preview { font-size: 11.5px; line-height: 1.7; color: var(--text-soft); background: #fff; border: 1px solid var(--line); border-left: 3px solid var(--brand); border-radius: 6px; padding: 8px 10px; }
+.mt-preview[hidden] { display: none; }
+.mt-preview b { color: var(--text); font-weight: 600; }
+.mt-preview .mt-key { color: var(--brand); font-weight: 600; }
+.mt-preview .mt-warn { color: var(--err); }
+.mt-preview code { font-family: var(--mono); font-size: 11px; background: #eef2f9; border-radius: 4px; padding: 1px 4px; }
 
 /* collapsible */
 details.sect { border: 1px solid var(--line); border-radius: var(--radius-sm); background: #fff; }
@@ -175,6 +190,11 @@ details.sect .sect-body { padding: 8px 12px 12px; }
 @keyframes shine { from { transform: translateX(-100%) } to { transform: translateX(100%) } }
 .progress-meta { display: flex; justify-content: space-between; align-items: baseline; margin-top: 8px; font-size: 12px; color: var(--muted); }
 .progress-meta strong { font-family: var(--mono); font-size: 13px; color: var(--text); }
+/* 子进度条：当前子测试内的请求完成度（总进度条只表示任务个数） */
+.progress-track-sub { height: 5px; margin-top: 10px; }
+.progress-fill-sub { background: linear-gradient(90deg, var(--accent), var(--brand)); opacity: .85; }
+.progress-meta-sub { margin-top: 5px; font-size: 11.5px; }
+.progress-meta-sub strong { font-size: 12px; }
 .progress-detail { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 6px; min-height: 20px; }
 .chip { font-size: 11.5px; padding: 2px 9px; border-radius: 999px; background: var(--bg-soft); color: var(--text-soft); border: 1px solid var(--line); font-family: var(--mono); }
 .stat-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--line); }
@@ -212,6 +232,36 @@ table.results td.key-cell { border-left: 3px solid var(--brand); }
 .key-5 { --key-color: #dc3b45; } .key-6 { --key-color: #12a5b8; } .key-7 { --key-color: #d97706; } .key-8 { --key-color: #3b4a66; }
 table.results td.key-cell { border-left-color: var(--key-color, var(--brand)); }
 .empty-state { padding: 34px 16px; text-align: center; color: var(--muted); font-size: 13px; }
+
+/* 请求详情（benchmark_data.db） */
+#tools-box textarea { font-family: var(--mono); font-size: 12px; }
+.db-filters { margin-bottom: 8px; }
+.db-stat { font-size: 11.5px; color: var(--muted); margin-bottom: 6px; min-height: 14px; }
+table.db-table { font-size: 11.5px; }
+table.db-table th, table.db-table td { text-align: left; }
+table.db-table th:first-child, table.db-table td:first-child { text-align: center; }
+table.db-table td.db-code { text-align: center; font-weight: 700; color: var(--ok); }
+table.db-table td.db-code.bad { color: var(--err); }
+table.db-table td.db-code.warn { color: var(--warn); }
+table.db-table td.db-preview { max-width: 520px; overflow: hidden; text-overflow: ellipsis; color: var(--text-soft); }
+table.db-table tbody tr { cursor: pointer; }
+table.db-table tbody tr.db-fail td { background: #fff6f6; }
+table.db-table tbody tr.db-fail:hover td { background: #ffefef; }
+.db-pager { display: flex; align-items: center; justify-content: flex-end; gap: 10px; padding-top: 8px; font-size: 12px; color: var(--muted); }
+
+/* 详情弹层 */
+.modal-mask { position: fixed; inset: 0; z-index: 95; background: rgba(18,26,44,.42); backdrop-filter: blur(2px); display: flex; align-items: center; justify-content: center; padding: 24px; }
+.modal-mask[hidden] { display: none; }
+.modal { width: min(1080px, 100%); max-height: 88vh; display: flex; flex-direction: column; background: #fff; border-radius: var(--radius); border: 1px solid var(--line); box-shadow: 0 24px 60px -24px rgba(15,23,42,.5); overflow: hidden; }
+.modal-head { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--line); background: linear-gradient(180deg, #fff, #fbfcff); }
+.modal-head .grow { flex: 1; }
+.modal-title { font-size: 13px; font-weight: 700; }
+.modal-meta { padding: 8px 14px; font-size: 11.5px; color: var(--muted); font-family: var(--mono); border-bottom: 1px solid var(--line); background: #fafbfe; }
+.modal-tabs { display: flex; gap: 4px; padding: 8px 12px 0; border-bottom: 1px solid var(--line); background: #fff; }
+.modal-tabs .tab { padding: 6px 14px; font-size: 12.5px; font-weight: 600; color: var(--text-soft); background: transparent; border: 1px solid transparent; border-bottom: none; border-radius: var(--radius-sm) var(--radius-sm) 0 0; cursor: pointer; }
+.modal-tabs .tab:hover { color: var(--brand); background: var(--bg-soft); }
+.modal-tabs .tab.is-active { color: var(--brand); background: var(--brand-soft); border-color: #dbe3ff; }
+.modal-body { flex: 1; margin: 0; padding: 12px 14px 18px; overflow: auto; font-family: var(--mono); font-size: 12px; line-height: 1.55; white-space: pre-wrap; word-break: break-word; background: #fbfcfe; color: var(--text); }
 
 /* toast */
 .toast-wrap { position: fixed; right: 20px; bottom: 20px; z-index: 90; display: flex; flex-direction: column; gap: 8px; }

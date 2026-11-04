@@ -3,3 +3,12 @@ __pycache__/
 *.pyo
 .env
 bash.exe.stackdump
+
+# 压测运行产物（含 API key、benchmark_data.db、CSV 报告），不入库
+history/
+
+# 本地 mock 数据集（几百 MB，用 mock_dataset.py 重新生成）
+datasets/
+
+# 本地 tokenizer（模型卡下载产物，按需自备）
+deepseek-v4-flash-tokenizer/
