@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """把真实抓取的 mock 请求体转换成 evalscope 压测数据集。
 
-源目录（默认 ``REDACTED``）::
+源目录（用 ``--src`` 指定，或设置环境变量 ``MOCK_SRC_DIR`` 作为默认值）::
 
     v1_messages_request.json     anthropic 形态，735 条 messages（368 user / 367 assistant）
     openai_chat_request.json     同一会话的 openai 形态（tool_calls / tool_call_id）
@@ -38,7 +38,8 @@ import os
 import time
 from typing import Any, Dict, Iterable, List
 
-DEFAULT_SRC = r'REDACTED'
+# 源目录不入库：用 --src 指定，或设置环境变量 MOCK_SRC_DIR 作为默认值
+DEFAULT_SRC = os.environ.get('MOCK_SRC_DIR', '')
 DEFAULT_OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'datasets')
 
 ANTHROPIC_FILE = 'v1_messages_request.json'
@@ -106,6 +107,8 @@ def _thinking_text(block: Dict[str, Any]) -> str:
 
 # ---------------------------------------------------------------- 源解析
 def _load_source(src: str) -> tuple[str, List[Dict[str, Any]]]:
+    if not src:
+        raise FileNotFoundError('未指定源目录：请用 --src 传入，或设置环境变量 MOCK_SRC_DIR')
     for name in (ANTHROPIC_FILE, OPENAI_FILE):
         path = os.path.join(src, name)
         if os.path.exists(path):
@@ -349,7 +352,8 @@ def _token_estimate(rows: List[Any], tokenizer_dir: str) -> dict:
 # ---------------------------------------------------------------- main
 def main() -> None:
     parser = argparse.ArgumentParser(description='把真实 mock 请求体转换成 evalscope 压测数据集')
-    parser.add_argument('--src', default=DEFAULT_SRC, help='mock 请求体所在目录')
+    parser.add_argument('--src', default=DEFAULT_SRC,
+                        help='mock 请求体所在目录（默认取环境变量 MOCK_SRC_DIR）')
     parser.add_argument('--out', default=DEFAULT_OUT, help='输出目录')
     parser.add_argument('--tokenizer', default='', help='可选：tokenizer 目录，用于估算 token 数')
     args = parser.parse_args()

@@ -240,11 +240,11 @@ evalscope 的 perf 模块本身没有 Anthropic 插件（请求体与响应解�
 
 ## 本地 mock 数据集
 
-真实抓取的请求体放在 `datasets/`，由 `mock_dataset.py` 从 mock 项目目录转换而来（默认
-`REDACTED`）：
+真实抓取的请求体放在 `datasets/`，由 `mock_dataset.py` 从本地 mock 抓取目录转换而来。
+源目录不入库，用 `--src` 指定，或设环境变量 `MOCK_SRC_DIR` 提供默认值：
 
 ```
-python mock_dataset.py                     # 重新生成 datasets/*.jsonl + manifest.json
+python mock_dataset.py --src <目录>        # 重新生成 datasets/*.jsonl + manifest.json
 python mock_dataset.py --src <目录> --out <目录>
 ```
 
