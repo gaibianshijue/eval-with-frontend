@@ -9,6 +9,8 @@ import asyncio
 import json
 import logging
 import re
+import socket
+import ssl
 import threading
 import time
 import traceback
@@ -17,6 +19,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Callable, Optional
+from urllib.parse import urlparse
 
 from evalscope.perf.arguments import Arguments
 from evalscope.perf.main import run_perf_benchmark
@@ -69,6 +72,50 @@ def _clean_evalscope_args(raw) -> dict:
             continue
         out[str(k)] = v
     return out
+
+
+def _split_host_port(url: str) -> tuple[str, int]:
+    """从 api_url 里取出 host / port（跑批前的 TCP 探活用）。"""
+    try:
+        parsed = urlparse(url or "")
+        if not parsed.hostname:
+            return "", 0
+        port = parsed.port or (443 if (parsed.scheme or "").lower() == "https" else 80)
+    except ValueError:
+        return "", 0
+    return parsed.hostname, port
+
+
+def preflight_target(url: str, timeout: float = 5.0, attempts: int = 3,
+                     interval: float = 2.0) -> tuple[bool, str]:
+    """跑批前对目标做连接探活，避免把「目标不可达」拖成几小时的空转。
+
+    evalscope 的 connect_test 在连不上时会一直重试到 ``total_timeout``（默认 6 小时），
+    期间前端只看到「请求 0/0」、``state=running``、``error`` 为空，看上去像卡死。
+
+    https 目标在 TCP 连通后还会做一次 TLS 握手（不校验证书），
+    以识破「TCP 被代理/防火墙接住、背后其实没有服务」的情况。
+    """
+    host, port = _split_host_port(url)
+    if not host:
+        return True, ""  # 解析不出 host 时交给 evalscope 自己报错
+    scheme = (urlparse(url or "").scheme or "").lower()
+    last = ""
+    for i in range(max(attempts, 1)):
+        try:
+            with socket.create_connection((host, port), timeout=timeout) as sock:
+                if scheme == "https":
+                    ctx = ssl.create_default_context()
+                    ctx.check_hostname = False
+                    ctx.verify_mode = ssl.CERT_NONE
+                    with ctx.wrap_socket(sock, server_hostname=host):
+                        pass
+                return True, ""
+        except OSError as e:  # 含 timeout / refused / TLS 握手失败
+            last = f"{type(e).__name__}: {e}"
+            if i + 1 < attempts:
+                time.sleep(interval)
+    return False, f"无法连接 {host}:{port} —— {last}"
 
 
 def _coerce_tools(raw) -> list[dict]:
@@ -501,7 +548,10 @@ class BenchmarkRunner:
 
     def stop(self) -> None:
         self._stop_event.set()
-        self._broadcast("[user] 已请求停止 —— 当前测试会跑完，下一个测试前退出")
+        self._broadcast(
+            "[user] 已请求停止 —— evalscope 正在执行的请求无法中断，"
+            "最多等其超时（total_timeout，默认 120s）；期间请勿发起新任务"
+        )
 
     def status(self) -> dict:
         prog = dict(self._progress)
@@ -622,29 +672,40 @@ class BenchmarkRunner:
         exc_box: list = []
 
         def _target():
-            with self._evalscope_lock:
-                _sub_register(sub_total)
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
+            # 锁必须带超时：/stop 只能让 worker 线程退出，拿不到锁的
+            # run_perf_benchmark 仍在跑（evalscope 没有取消 API），会一直占着这把锁。
+            if not self._evalscope_lock.acquire(timeout=5.0):
+                exc_box.append(RuntimeError(
+                    "上一个 evalscope 调用仍未退出（停止操作无法中断已在执行的请求），"
+                    "请等它超时或重启压测服务后再试"
+                ))
+                return
+            _sub_register(sub_total)
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                ret = run_perf_benchmark(args)
+                result_box.append(ret)
+            except Exception as e:  # noqa: BLE001
+                exc_box.append(e)
+            finally:
+                _sub_unregister()
                 try:
-                    ret = run_perf_benchmark(args)
-                    result_box.append(ret)
-                except Exception as e:  # noqa: BLE001
-                    exc_box.append(e)
-                finally:
-                    _sub_unregister()
-                    try:
-                        pending = asyncio.all_tasks(loop)
-                        for task in pending:
-                            task.cancel()
-                        if pending:
-                            loop.run_until_complete(
-                                asyncio.gather(*pending, return_exceptions=True)
-                            )
-                    except Exception:  # noqa: BLE001
-                        pass
-                    finally:
-                        loop.close()
+                    pending = asyncio.all_tasks(loop)
+                    for task in pending:
+                        task.cancel()
+                    if pending:
+                        loop.run_until_complete(
+                            asyncio.gather(*pending, return_exceptions=True)
+                        )
+                except Exception:  # noqa: BLE001
+                    pass
+                try:
+                    loop.close()
+                except Exception:  # noqa: BLE001
+                    pass
+                # 锁一定要释放，否则后续任务会一直卡在 acquire 上
+                self._evalscope_lock.release()
 
         t = threading.Thread(target=_target, daemon=True)
         t.start()
@@ -668,7 +729,10 @@ class BenchmarkRunner:
         common = dict(
             api=cfg.api or "openai",
             read_timeout=600,
-            connect_timeout=30,
+            connect_timeout=10,
+            # evalscope 默认 6 小时；目标不可达时 connect_test 会一直重试到这个上限，
+            # 前端只能看到「请求 0/0」。压测场景下没必要等这么久，默认 120s。
+            total_timeout=120,
             extra_args=extra,
             enable_progress_tracker=True,
             debug=False,
@@ -787,6 +851,20 @@ class BenchmarkRunner:
                 + " ==="
             )
 
+        # 目标不可达时 evalscope 会连着重试到 total_timeout，先做一次 TCP 探活兜底
+        try:
+            ok, why = preflight_target(cfg.api_url)
+        except Exception as e:  # noqa: BLE001  探活本身出错不阻塞跑批
+            ok, why = True, ""
+            self._broadcast(f"[warn] 目标探活失败（已跳过）: {e}")
+        if not ok:
+            self._state = "error"
+            self._error = f"目标不可达: {why}"
+            self._broadcast(f"[fatal] {self._error}")
+            self._broadcast("=== 本轮未发起任何请求，请检查网络/域名后重试 ===")
+            self._detach_logger()
+            return
+
         try:
             if num_keys <= 1:
                 # 单 Key：保持原有行为，无需多线程
@@ -808,8 +886,14 @@ class BenchmarkRunner:
                         except Exception as e:  # noqa: BLE001
                             self._broadcast(f"[error] {label} 线程异常: {e}")
 
-            self._state = "completed"
-            self._broadcast(f"=== 全部完成 @ {datetime.now().isoformat(timespec='seconds')} ===")
+            if self._stop_event.is_set():
+                # 停止时 _run_key_loop 已把 state 置 stopped，这里不能覆盖成 completed
+                self._state = "stopped"
+                self._error = self._error or "用户请求停止"
+                self._broadcast(f"=== 已停止 @ {datetime.now().isoformat(timespec='seconds')} ===")
+            else:
+                self._state = "completed"
+                self._broadcast(f"=== 全部完成 @ {datetime.now().isoformat(timespec='seconds')} ===")
             self._broadcast(f"=== CSV: {self._csv_path} ===")
         except Exception as e:  # noqa: BLE001
             self._state = "error"
